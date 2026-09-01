@@ -1,2 +1,6 @@
 [hooks]
 exclude_commands = ["npm run dev", "curl", "playwright"]
+
+[tee]
+enabled = true
+mode = "failures" 
