@@ -1,0 +1,2 @@
+[hooks]
+exclude_commands = ["npm run dev", "curl", "playwright"]
