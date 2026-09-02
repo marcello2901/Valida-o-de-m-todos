@@ -1,0 +1,7 @@
+# Dependências usadas apenas para desenvolver e testar.
+# Instalar com:  pip install -r requirements-dev.txt
+
+-r requirements.txt
+
+pytest>=8.0
+numpy>=1.26               # usado só nos testes, para conferir a regressão de Deming
