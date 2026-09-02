@@ -1,0 +1,19 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Banco de dados local de desenvolvimento
+*.sqlite3
+banco-local.sqlite3
+
+# Arquivos estáticos coletados para produção
+staticfiles/
+
+# Configuração local com segredos
+.env
+
+.pytest_cache/
+.coverage
+htmlcov/
