@@ -1,0 +1,445 @@
+{% load l10n %}<!doctype html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ estudo.identificacao }} — Resultado da validação</title>
+<style>
+  /* Mesma paleta dos gráficos: a tela e o PDF precisam parecer o mesmo documento. */
+  :root {
+    --superficie: #fcfcfb;
+    --plano: #f9f9f7;
+    --tinta: #0b0b0b;
+    --tinta-secundaria: #52514e;
+    --tinta-suave: #898781;
+    --grade: #e1e0d9;
+    --borda: #c3c2b7;
+    --aprovado: #0ca30c;
+    --reprovado: #d03b3b;
+    --indeterminado: #fab219;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px 16px 64px;
+    background: var(--plano); color: var(--tinta);
+    font: 14px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main { max-width: 900px; margin: 0 auto; }
+  section {
+    background: var(--superficie); border: 1px solid var(--grade);
+    border-radius: 8px; padding: 20px 22px; margin-bottom: 16px;
+  }
+  h1 { font-size: 21px; margin: 0 0 4px; }
+  h2 { font-size: 15px; margin: 0 0 14px; padding-bottom: 8px; border-bottom: 1px solid var(--grade); }
+  h3 { font-size: 13px; margin: 20px 0 8px; color: var(--tinta-secundaria); }
+  p { margin: 0 0 10px; }
+  .sub { color: var(--tinta-secundaria); font-size: 13px; margin: 0 0 16px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--grade); vertical-align: top; }
+  th { font-weight: 600; color: var(--tinta-secundaria); font-size: 12px; }
+  td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+  .rotulo { color: var(--tinta-suave); width: 42%; }
+  .referencia { font-size: 12px; color: var(--tinta-suave); }
+
+  .selo {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 5px 12px; border-radius: 999px; font-weight: 600; font-size: 13px;
+    border: 1.5px solid currentColor;
+  }
+  .selo--aprovado { color: var(--aprovado); }
+  .selo--reprovado { color: var(--reprovado); }
+  .selo--indeterminado { color: #8a6100; }
+  .marca { font-weight: 700; }
+
+  .estado { font-weight: 600; font-size: 12px; white-space: nowrap; }
+  .estado--APROVADO { color: var(--aprovado); }
+  .estado--REPROVADO { color: var(--reprovado); }
+  .estado--INDETERMINADO { color: #8a6100; }
+
+  .aviso { border-left: 3px solid var(--indeterminado); background: #fffbf0; padding: 12px 14px; margin-bottom: 10px; font-size: 13px; border-radius: 0 4px 4px 0; }
+  .falta { border-left: 3px solid var(--reprovado); background: #fdf3f3; padding: 12px 14px; margin-bottom: 10px; font-size: 13px; border-radius: 0 4px 4px 0; }
+  .vazio { color: var(--tinta-suave); font-style: italic; }
+
+  .colunas { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
+  .grafico { margin: 14px 0 4px; overflow-x: auto; }
+  .nota { font-size: 12px; color: var(--tinta-suave); margin-top: 8px; }
+
+  @media (max-width: 720px) { .colunas { grid-template-columns: 1fr; } }
+  @media print {
+    body { background: #fff; padding: 0; }
+    section { border: none; border-top: 1px solid var(--grade); border-radius: 0; page-break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+<main>
+
+<section>
+  <h1>{{ estudo.identificacao }}</h1>
+  <p class="sub">
+    {{ estudo.mensurando.nome }} — {{ estudo.mensurando.unidade_medida }} —
+    {{ estudo.mensurando.material_biologico }} · {{ estudo.get_tipo_display }}
+  </p>
+
+  {% if tipo == "quantitativo" %}
+    {% with s=veredito.status %}
+    <span class="selo selo--{{ s|lower }}">
+      <span class="marca">{% if s == "APROVADO" %}✓{% elif s == "REPROVADO" %}✕{% else %}?{% endif %}</span>
+      {{ s }}
+    </span>
+    {% endwith %}
+  {% endif %}
+
+  <table style="margin-top:18px">
+    <tr><td class="rotulo">Laboratório</td><td>{{ estudo.laboratorio }}</td></tr>
+    <tr><td class="rotulo">Módulo do estudo</td><td>{{ estudo.get_modulo_display }}</td></tr>
+    {% if modulo_efetivo != estudo.modulo %}
+    <tr><td class="rotulo">Módulo aplicado hoje</td><td><strong>{{ modulo_efetivo|default:"nenhum módulo vigente" }}</strong> — a assinatura do laboratório mudou desde a criação do estudo</td></tr>
+    {% endif %}
+    <tr><td class="rotulo">Desenho da precisão</td><td>{{ estudo.get_desenho_precisao_display }}</td></tr>
+    <tr><td class="rotulo">Período</td><td>{{ estudo.data_inicio|date:"d/m/Y" }}{% if estudo.data_conclusao %} a {{ estudo.data_conclusao|date:"d/m/Y" }}{% endif %}</td></tr>
+    <tr><td class="rotulo">Situação</td><td>{{ estudo.get_situacao_display }}</td></tr>
+    <tr><td class="rotulo">Responsável pelo registro</td><td>{{ estudo.criado_por.get_full_name|default:estudo.criado_por.username }}</td></tr>
+  </table>
+</section>
+
+{% if pendencias_especificacao %}
+<section>
+  <h2>Pendências que impedem a aprovação</h2>
+  {% for pendencia in pendencias_especificacao %}
+    <div class="falta">{{ pendencia|capfirst }}.</div>
+  {% endfor %}
+  <p class="nota">Um limite de aceitação sem referência científica declarada não sustenta auditoria. Enquanto houver pendência aqui, o estudo não pode ser aprovado.</p>
+</section>
+{% endif %}
+
+{% if avisos %}
+<section>
+  <h2>Ressalvas do estudo</h2>
+  {% for aviso in avisos %}<div class="aviso">{{ aviso }}</div>{% endfor %}
+  <p class="nota">Estas ressalvas acompanham o relatório. Elas não reprovam o método, mas delimitam o que o estudo conseguiu demonstrar.</p>
+</section>
+{% endif %}
+
+<section>
+  <h2>Rastreabilidade</h2>
+  <div class="colunas">
+    <div>
+      <h3>Sistema em teste (S.A.t)</h3>
+      <table>
+        <tr><td class="rotulo">Equipamento</td><td>{{ estudo.sistema_teste.equipamento }}</td></tr>
+        <tr><td class="rotulo">Número de série</td><td>{{ estudo.sistema_teste.numero_serie }}</td></tr>
+        <tr><td class="rotulo">Metodologia</td><td>{{ estudo.sistema_teste.metodologia }}</td></tr>
+        <tr><td class="rotulo">Intervalo analítico</td><td>{{ estudo.sistema_teste.intervalo_analitico_minimo|default:"—" }} a {{ estudo.sistema_teste.intervalo_analitico_maximo|default:"—" }}</td></tr>
+      </table>
+      {% for reagente in estudo.sistema_teste.reagentes.all %}
+        <table><tr><td class="rotulo">Reagente</td><td>{{ reagente.nome }}<br><span class="referencia">lote {{ reagente.lote }} · validade {{ reagente.validade|date:"d/m/Y" }}</span></td></tr></table>
+      {% endfor %}
+      {% for calibrador in estudo.sistema_teste.calibradores.all %}
+        <table><tr><td class="rotulo">Calibrador</td><td>{{ calibrador.nome }}<br><span class="referencia">lote {{ calibrador.lote }} · validade {{ calibrador.validade|date:"d/m/Y" }}</span></td></tr></table>
+      {% endfor %}
+    </div>
+    <div>
+      <h3>Sistema de comparação (S.A.c)</h3>
+      {% if estudo.sistema_comparacao %}
+      <table>
+        <tr><td class="rotulo">Equipamento</td><td>{{ estudo.sistema_comparacao.equipamento }}</td></tr>
+        <tr><td class="rotulo">Número de série</td><td>{{ estudo.sistema_comparacao.numero_serie }}</td></tr>
+        <tr><td class="rotulo">Metodologia</td><td>{{ estudo.sistema_comparacao.metodologia }}</td></tr>
+        <tr><td class="rotulo">Intervalo analítico</td><td>{{ estudo.sistema_comparacao.intervalo_analitico_minimo|default:"—" }} a {{ estudo.sistema_comparacao.intervalo_analitico_maximo|default:"—" }}</td></tr>
+      </table>
+      {% for reagente in estudo.sistema_comparacao.reagentes.all %}
+        <table><tr><td class="rotulo">Reagente</td><td>{{ reagente.nome }}<br><span class="referencia">lote {{ reagente.lote }} · validade {{ reagente.validade|date:"d/m/Y" }}</span></td></tr></table>
+      {% endfor %}
+      {% else %}
+        <p class="vazio">Estudo sem sistema de comparação.</p>
+      {% endif %}
+
+      <h3>Intervalo de referência</h3>
+      {% if estudo.mensurando.tem_intervalo_referencia %}
+        <p>{{ estudo.mensurando.referencia_inferior }} a {{ estudo.mensurando.referencia_superior }} {{ estudo.mensurando.unidade_medida }}</p>
+      {% else %}
+        <p class="vazio">Não informado — a concordância clínica não pode ser calculada.</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <h3>Materiais de controle</h3>
+  <table>
+    <tr><th>Nível</th><th>Material</th><th>Lote</th><th>Validade</th><th class="n">Valor alvo</th></tr>
+    {% for item in precisao %}
+    <tr>
+      <td>{{ item.numero }}</td>
+      <td>{{ item.nivel.controle.nome }}</td>
+      <td>{{ item.nivel.controle.lote }}</td>
+      <td>{{ item.nivel.controle.validade|date:"d/m/Y" }}</td>
+      <td class="n">{{ item.nivel.controle.valor_alvo|default:"—" }}</td>
+    </tr>
+    {% empty %}
+    <tr><td colspan="5" class="vazio">Nenhum nível cadastrado.</td></tr>
+    {% endfor %}
+  </table>
+</section>
+
+<section>
+  <h2>Especificação da qualidade analítica</h2>
+  <table>
+    <tr><th>Indicador</th><th class="n">Limite</th><th>Referência científica</th></tr>
+    <tr>
+      <td>Erro total máximo</td>
+      <td class="n">{{ estudo.especificacao.erro_total_maximo_pct|default:"—" }}%</td>
+      <td class="referencia">{{ estudo.especificacao.erro_total_referencia|default:"—" }}</td>
+    </tr>
+    <tr>
+      <td>Erro sistemático (bias) máximo</td>
+      <td class="n">{{ estudo.especificacao.bias_maximo_pct|default:"—" }}%</td>
+      <td class="referencia">{{ estudo.especificacao.bias_referencia|default:"—" }}</td>
+    </tr>
+    {% for limite in estudo.especificacao.limites_imprecisao.all %}
+    <tr>
+      <td>Imprecisão máxima — nível {{ limite.nivel }}</td>
+      <td class="n">{{ limite.maximo_pct }}%</td>
+      <td class="referencia">{{ limite.referencia }}</td>
+    </tr>
+    {% endfor %}
+    {% if estudo.especificacao.erro_total_maximo_absoluto %}
+    <tr>
+      <td>Erro total absoluto (resultados ≤ {{ estudo.especificacao.erro_total_limiar_absoluto }})</td>
+      <td class="n">± {{ estudo.especificacao.erro_total_maximo_absoluto }}</td>
+      <td class="referencia">{{ estudo.especificacao.erro_total_referencia_absoluto|default:"—" }}</td>
+    </tr>
+    {% endif %}
+  </table>
+</section>
+
+{% if tipo == "qualitativo" %}
+<section>
+  <h2>Desempenho do método qualitativo</h2>
+  {% if qualitativo.tem_dados %}
+    {% with d=qualitativo.desempenho t=qualitativo.tabela %}
+    <table>
+      <tr><th>Indicador</th><th class="n">Valor</th><th class="n">IC 95%</th></tr>
+      <tr><td>Sensibilidade</td><td class="n">{{ d.sensibilidade_pct|floatformat:1|default:"—" }}%</td><td class="n">{% if d.sensibilidade_ic95 %}{{ d.sensibilidade_ic95.0|floatformat:1 }} – {{ d.sensibilidade_ic95.1|floatformat:1 }}%{% else %}—{% endif %}</td></tr>
+      <tr><td>Especificidade</td><td class="n">{{ d.especificidade_pct|floatformat:1|default:"—" }}%</td><td class="n">{% if d.especificidade_ic95 %}{{ d.especificidade_ic95.0|floatformat:1 }} – {{ d.especificidade_ic95.1|floatformat:1 }}%{% else %}—{% endif %}</td></tr>
+      <tr><td>Concordância total</td><td class="n">{{ d.concordancia_pct|floatformat:1|default:"—" }}%</td><td class="n">{% if d.concordancia_ic95 %}{{ d.concordancia_ic95.0|floatformat:1 }} – {{ d.concordancia_ic95.1|floatformat:1 }}%{% else %}—{% endif %}</td></tr>
+      <tr><td>Kappa de Cohen</td><td class="n">{{ d.kappa|floatformat:3|default:"—" }}</td><td class="n">{{ d.classificacao_kappa }}</td></tr>
+    </table>
+    <h3>Tabela 2×2</h3>
+    <table>
+      <tr><th></th><th class="n">Referência reagente</th><th class="n">Referência não reagente</th></tr>
+      <tr><td>Teste reagente</td><td class="n">{{ t.verdadeiros_positivos }}</td><td class="n">{{ t.falsos_positivos }}</td></tr>
+      <tr><td>Teste não reagente</td><td class="n">{{ t.falsos_negativos }}</td><td class="n">{{ t.verdadeiros_negativos }}</td></tr>
+    </table>
+    <p class="nota">Os valores preditivos refletem a prevalência da amostra estudada ({{ d.prevalencia_amostra_pct|floatformat:1 }}%), que raramente é a da população atendida pelo laboratório.</p>
+    {% endwith %}
+  {% else %}
+    <p class="vazio">{{ qualitativo.motivo|capfirst }}.</p>
+  {% endif %}
+</section>
+
+{% else %}
+
+<section>
+  <h2>Precisão</h2>
+  <p class="sub">{{ estudo.get_desenho_precisao_display }}</p>
+
+  {% if precisao %}
+  <table>
+    <tr>
+      <th>Nível</th><th class="n">n</th><th class="n">Média</th>
+      <th class="n">CV repetibilidade</th><th class="n">CV intermediária</th>
+      <th class="n">Limite</th><th>Situação</th>
+    </tr>
+    {% for item in precisao %}
+    <tr>
+      <td>{{ item.numero }}</td>
+      <td class="n">{{ item.estatistica.n_total }}</td>
+      <td class="n">{{ item.estatistica.media|floatformat:3|default:"—" }}</td>
+      <td class="n">{{ item.estatistica.cv_repetibilidade|floatformat:2|default:"—" }}%</td>
+      <td class="n"><strong>{{ item.estatistica.cv_intermediaria|floatformat:2|default:"—" }}</strong>{% if item.estatistica.cv_intermediaria %}%{% endif %}</td>
+      {% for indicador in item.avaliacao.indicadores %}{% if indicador.indicador == "imprecisão" %}
+        <td class="n">{{ indicador.limite_pct|floatformat:2|default:"—" }}%</td>
+        <td class="estado estado--{{ indicador.status }}">{{ indicador.status }}</td>
+      {% endif %}{% endfor %}
+    </tr>
+    {% endfor %}
+  </table>
+  <p class="nota">
+    O CV que alimenta o Erro Total é o
+    <strong>{{ precisao.0.estatistica.tipo_cv_aplicavel|default:"—" }}</strong>.
+    A precisão intermediária inclui a variação entre corridas e é sempre maior ou
+    igual à repetibilidade — ela representa o método na rotina.
+  </p>
+
+  {% for grafico in graficos.levey_jennings %}
+    <div class="grafico">{{ grafico.svg|safe }}</div>
+  {% endfor %}
+  {% else %}
+    <p class="vazio">Nenhum nível de controle cadastrado neste estudo.</p>
+  {% endif %}
+</section>
+
+<section>
+  <h2>Comparabilidade</h2>
+  {% if comparabilidade.tem_dados %}
+    {% with c=comparabilidade %}
+    <table>
+      <tr><th>Medida</th><th class="n">Resultado</th><th>Leitura</th></tr>
+      <tr>
+        <td>Amostras pareadas</td>
+        <td class="n">{{ c.n }}</td>
+        <td class="referencia">{% if c.deming.atende_minimo_ep09 %}atende ao mínimo do EP09 (40){% else %}abaixo do mínimo do EP09 (40){% endif %}</td>
+      </tr>
+      <tr>
+        <td>Erro sistemático médio</td>
+        <td class="n">{{ c.erro_sistematico.erro_medio|floatformat:4|default:"—" }}</td>
+        <td class="referencia">
+          média das diferenças percentuais: {{ c.erro_sistematico.erro_medio_pct|floatformat:2|default:"—" }}% ·
+          razão das médias: {{ c.erro_sistematico.erro_medio_pct_ponderado|floatformat:2|default:"—" }}%
+        </td>
+      </tr>
+      <tr>
+        <td>Regressão de Deming</td>
+        <td class="n">y = {{ c.deming.inclinacao|floatformat:4|default:"—" }}x {% if c.deming.intercepto >= 0 %}+{% endif %} {{ c.deming.intercepto|floatformat:4|default:"—" }}</td>
+        <td class="referencia">admite erro nos dois eixos — é a que julga erro proporcional</td>
+      </tr>
+      <tr>
+        <td>Regressão de Passing-Bablok</td>
+        <td class="n">y = {{ c.passing_bablok.inclinacao|floatformat:4|default:"—" }}x {% if c.passing_bablok.intercepto >= 0 %}+{% endif %} {{ c.passing_bablok.intercepto|floatformat:4|default:"—" }}</td>
+        <td class="referencia">não paramétrica, resistente a valores discrepantes</td>
+      </tr>
+      <tr>
+        <td>Regressão linear (mínimos quadrados)</td>
+        <td class="n">r = {{ c.regressao.r|floatformat:4|default:"—" }} · r² = {{ c.regressao.r2|floatformat:4|default:"—" }}</td>
+        <td class="referencia">r indica se a faixa estudada foi ampla o bastante — <strong>não mede concordância</strong></td>
+      </tr>
+      <tr>
+        <td>Concordância de Lin (ρc)</td>
+        <td class="n">{{ c.lin.ccc|floatformat:4|default:"—" }}</td>
+        <td class="referencia">
+          {{ c.lin.classificacao }} · precisão {{ c.lin.componente_precisao|floatformat:4|default:"—" }} ×
+          acurácia {{ c.lin.componente_acuracia|floatformat:4|default:"—" }}
+        </td>
+      </tr>
+      <tr>
+        <td>Viés médio (Bland-Altman)</td>
+        <td class="n">{{ c.bland_altman.vies|floatformat:4|default:"—" }}</td>
+        <td class="referencia">limites de concordância: {{ c.bland_altman.limite_inferior|floatformat:4|default:"—" }} a {{ c.bland_altman.limite_superior|floatformat:4|default:"—" }}</td>
+      </tr>
+    </table>
+
+    <p class="nota">
+      O coeficiente r e o ρc de Lin respondem perguntas diferentes: r diz se os pontos
+      formam <em>uma</em> reta; ρc diz se formam <em>a</em> reta de identidade. Dois métodos
+      podem ter r = 1,000 com um lendo 30% acima do outro.
+    </p>
+
+    {% if graficos.regressao %}<div class="grafico">{{ graficos.regressao|safe }}</div>{% endif %}
+    {% if graficos.bland_altman %}<div class="grafico">{{ graficos.bland_altman|safe }}</div>{% endif %}
+
+    <h3>Grau de concordância</h3>
+    <table>
+      <tr><th>Tipo</th><th class="n">Concordância</th><th>Detalhe</th></tr>
+      <tr>
+        <td>Analítica (erro total permitido)</td>
+        <td class="n">{{ c.analitica.concordancia_pct|floatformat:1|default:"—" }}%</td>
+        <td class="referencia">{{ c.analitica.dentro_do_limite }} de {{ c.analitica.avaliadas }} amostras dentro do limite</td>
+      </tr>
+      <tr>
+        <td>Clínica (intervalo de referência)</td>
+        <td class="n">{{ c.clinica.concordancia_pct|floatformat:1|default:"—" }}%</td>
+        <td class="referencia">
+          {% if c.clinica.observacao %}{{ c.clinica.observacao|capfirst }}{% else %}{{ c.clinica.concordantes }} de {{ c.clinica.n }} amostras com a mesma interpretação{% endif %}
+        </td>
+      </tr>
+    </table>
+
+    {% if c.analitica.discordantes %}
+    <h3>Amostras fora do erro total permitido</h3>
+    <table>
+      <tr><th>Amostra</th><th class="n">Comparação</th><th class="n">Teste</th><th class="n">Erro</th><th class="n">Limite</th></tr>
+      {% for d in c.analitica.discordantes %}
+      <tr>
+        <td>{{ d.identificacao }}</td>
+        <td class="n">{{ d.valor_comparacao|floatformat:4 }}</td>
+        <td class="n">{{ d.valor_teste|floatformat:4 }}</td>
+        <td class="n estado--REPROVADO">{{ d.erro_pct|floatformat:2 }}%</td>
+        <td class="n">{{ d.limite_pct|floatformat:2 }}%</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% endif %}
+
+    {% if c.clinica.reclassificacoes %}
+    <h3>Amostras que mudariam de interpretação</h3>
+    <table>
+      <tr><th>Amostra</th><th class="n">Comparação</th><th>Interpretação</th><th class="n">Teste</th><th>Interpretação</th></tr>
+      {% for r in c.clinica.reclassificacoes %}
+      <tr>
+        <td>{{ r.identificacao }}</td>
+        <td class="n">{{ r.valor_comparacao|floatformat:4 }}</td>
+        <td>{{ r.classificacao_comparacao }}</td>
+        <td class="n">{{ r.valor_teste|floatformat:4 }}</td>
+        <td class="estado--REPROVADO">{{ r.classificacao_teste }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    <p class="nota">Cada linha é um paciente que seria considerado normal por um método e alterado pelo outro.</p>
+    {% endif %}
+    {% endwith %}
+  {% else %}
+    <p class="vazio">{{ comparabilidade.motivo|capfirst }}.</p>
+  {% endif %}
+</section>
+
+<section>
+  <h2>Veredito por nível</h2>
+  {% for avaliacao in veredito.niveis %}
+    <h3>
+      Nível {{ avaliacao.nivel }} — concentração {{ avaliacao.concentracao|floatformat:3|default:"—" }}
+      <span class="estado estado--{{ avaliacao.status }}">{{ avaliacao.status }}</span>
+    </h3>
+    <table>
+      <tr><th>Indicador</th><th class="n">Observado</th><th class="n">Limite</th><th>Critério</th><th>Situação</th></tr>
+      {% for indicador in avaliacao.indicadores %}
+      <tr>
+        <td>{{ indicador.indicador|capfirst }}</td>
+        <td class="n">{{ indicador.observado_pct|floatformat:2|default:"—" }}{% if indicador.observado_pct != None %}%{% endif %}</td>
+        <td class="n">{{ indicador.limite_pct|floatformat:2|default:"—" }}{% if indicador.limite_pct != None %}%{% endif %}</td>
+        <td class="referencia">{{ indicador.tipo_limite }} — {{ indicador.referencia|default:"sem referência declarada" }}</td>
+        <td class="estado estado--{{ indicador.status }}">
+          {{ indicador.status }}{% if indicador.motivo %}<br><span class="referencia">{{ indicador.motivo }}</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+    <p class="nota">
+      Métrica Sigma: <strong>{{ avaliacao.sigma|floatformat:1|default:"—" }}</strong> — {{ avaliacao.classificacao_sigma }}
+      {% if avaliacao.nao_contratados %}<br>Não avaliado neste módulo: {{ avaliacao.nao_contratados|join:", " }}.{% endif %}
+    </p>
+  {% empty %}
+    <p class="vazio">Nenhum nível avaliado.</p>
+  {% endfor %}
+</section>
+{% endif %}
+
+<section>
+  <h2>Sobre este resultado</h2>
+  <p class="nota">
+    Cálculo executado pelo motor de validação a partir dos dados brutos registrados.
+    Este documento reflete o estado atual do estudo; ele só se torna registro de
+    qualidade após a conclusão e a liberação pelo responsável técnico, quando o
+    resultado é congelado junto da versão do motor que o produziu.
+  </p>
+  <p class="nota">
+    Procedimentos estatísticos conforme descritos em CLSI EP15 (precisão), EP09
+    (comparabilidade) e EP12 (qualitativo). O sistema não é certificado nem
+    endossado pelo CLSI; a responsabilidade pela validação permanece do
+    laboratório e de seu responsável técnico.
+  </p>
+</section>
+
+</main>
+</body>
+</html>

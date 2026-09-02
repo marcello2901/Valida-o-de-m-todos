@@ -401,26 +401,30 @@ def grafico_bland_altman(
 
     # As retas de referência dividem a mesma lista, para que rótulos próximos
     # sejam deslocados em vez de escritos um por cima do outro.
+    # Rótulos à esquerda: num gráfico de diferenças as amostras de concentração
+    # alta ficam à direita e é justamente lá que a dispersão encosta nos limites.
     rotulos: list[float] = []
     if vies is not None:
         corpo.append(
             _linha_referencia(
                 escala_x, escala_y, vies, f"viés {_formatar(vies, 3)}",
-                tracejada=False, rotulos_usados=rotulos,
+                tracejada=False, rotulos_usados=rotulos, ancorar_esquerda=True,
             )
         )
     if limite_superior is not None:
         corpo.append(
             _linha_referencia(
                 escala_x, escala_y, limite_superior,
-                f"+1,96 DP {_formatar(limite_superior, 3)}", rotulos_usados=rotulos,
+                f"+1,96 DP {_formatar(limite_superior, 3)}",
+                rotulos_usados=rotulos, ancorar_esquerda=True,
             )
         )
     if limite_inferior is not None:
         corpo.append(
             _linha_referencia(
                 escala_x, escala_y, limite_inferior,
-                f"−1,96 DP {_formatar(limite_inferior, 3)}", rotulos_usados=rotulos,
+                f"−1,96 DP {_formatar(limite_inferior, 3)}",
+                rotulos_usados=rotulos, ancorar_esquerda=True,
             )
         )
     # A linha do zero entra por último e sem rótulo: ela é referência de leitura,
