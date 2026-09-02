@@ -238,3 +238,76 @@ def bias_no_nivel(
         "bias": bias,
         "bias_pct": (bias / nivel) * 100 if nivel != 0 else None,
     }
+
+
+def regressao_linear(comparacao: Sequence[float], teste: Sequence[float]) -> dict:
+    """Regressão por mínimos quadrados, com coeficientes r e r².
+
+    Incluída porque é esperada em relatórios de validação e porque **r serve
+    para julgar a amplitude das amostras**: o EP09 usa r ≥ 0,975 como indício de
+    que a faixa de concentrações estudada é ampla o bastante para uma regressão
+    simples ser confiável.
+
+    Duas advertências que precisam constar no relatório:
+
+    1. **r não mede concordância.** Dois métodos podem ter r = 0,999 e um deles
+       ler 30% acima do outro em toda a faixa. Correlação mede se os pontos
+       seguem *uma* reta, não se seguem a reta de identidade.
+    2. **A inclinação aqui é enviesada** para baixo, porque mínimos quadrados
+       supõe o eixo X isento de erro. Para decidir sobre erro proporcional, use
+       a inclinação de Deming ou Passing-Bablok, não esta.
+    """
+    pares = est.parear(comparacao, teste)
+    n = len(pares)
+
+    if n < 3:
+        return {
+            "metodo": "Mínimos quadrados",
+            "n": n,
+            "inclinacao": None,
+            "intercepto": None,
+            "r": None,
+            "r2": None,
+            "erro_padrao_estimativa": None,
+            "amplitude_adequada": None,
+            "observacao": "são necessárias ao menos 3 amostras pareadas",
+        }
+
+    media_x = sum(x for x, _ in pares) / n
+    media_y = sum(y for _, y in pares) / n
+
+    s_xx = sum((x - media_x) ** 2 for x, _ in pares)
+    s_yy = sum((y - media_y) ** 2 for _, y in pares)
+    s_xy = sum((x - media_x) * (y - media_y) for x, y in pares)
+
+    if s_xx == 0 or s_yy == 0:
+        return {
+            "metodo": "Mínimos quadrados",
+            "n": n,
+            "inclinacao": None,
+            "intercepto": None,
+            "r": None,
+            "r2": None,
+            "erro_padrao_estimativa": None,
+            "amplitude_adequada": None,
+            "observacao": "sem variação em um dos métodos — a reta é indefinida",
+        }
+
+    inclinacao = s_xy / s_xx
+    intercepto = media_y - inclinacao * media_x
+    r = s_xy / math.sqrt(s_xx * s_yy)
+
+    residuos = [(y - (inclinacao * x + intercepto)) ** 2 for x, y in pares]
+    erro_padrao = math.sqrt(sum(residuos) / (n - 2)) if n > 2 else None
+
+    return {
+        "metodo": "Mínimos quadrados",
+        "n": n,
+        "inclinacao": inclinacao,
+        "intercepto": intercepto,
+        "r": r,
+        "r2": r**2,
+        "erro_padrao_estimativa": erro_padrao,
+        "amplitude_adequada": abs(r) >= 0.975,
+        "observacao": None,
+    }

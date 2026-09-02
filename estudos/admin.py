@@ -37,14 +37,25 @@ class AmostraQualitativaInline(admin.TabularInline):
 
 @admin.register(Estudo)
 class EstudoAdmin(admin.ModelAdmin):
-    list_display = ["identificacao", "mensurando", "tipo", "modulo", "situacao", "data_inicio", "laboratorio"]
-    list_filter = ["situacao", "tipo", "modulo", "laboratorio"]
+    list_display = ["identificacao", "mensurando", "tipo", "modulo", "desenho_precisao", "situacao", "data_inicio"]
+    list_filter = ["situacao", "tipo", "modulo", "desenho_precisao", "laboratorio"]
     search_fields = ["identificacao", "mensurando__nome"]
     date_hierarchy = "data_inicio"
     inlines = [NivelEstudoInline, AmostraComparacaoInline, AmostraQualitativaInline]
 
     fieldsets = [
         ("Identificação", {"fields": ["laboratorio", "identificacao", "tipo", "modulo", "situacao"]}),
+        (
+            "Desenho do estudo de precisão",
+            {
+                "fields": ["desenho_precisao"],
+                "description": (
+                    "Corrida única mede apenas repetibilidade: a variação entre dias fica "
+                    "invisível e o Erro Total sai otimista. Múltiplas corridas medem a "
+                    "precisão intermediária, que é o desempenho real na rotina."
+                ),
+            },
+        ),
         (
             "Rastreabilidade",
             {

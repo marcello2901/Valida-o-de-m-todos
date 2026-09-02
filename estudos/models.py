@@ -20,6 +20,7 @@ from django.utils import timezone
 
 from catalogo.models import Controle, EspecificacaoQualidade, Mensurando, SistemaAnalitico
 from contas.models import Assinatura, Laboratorio
+from motor import precisao
 
 # Versão do motor de cálculo gravada junto de cada veredito.
 VERSAO_MOTOR = "1.0.0"
@@ -72,6 +73,18 @@ class Estudo(models.Model):
         related_name="estudos"
     )
 
+    desenho_precisao = models.CharField(
+        "desenho do estudo de precisão",
+        max_length=25,
+        choices=precisao.DESENHOS,
+        default=precisao.DESENHO_MULTIPLAS_CORRIDAS,
+        help_text=(
+            "Múltiplas corridas mede repetibilidade E precisão intermediária. "
+            "Corrida única mede apenas repetibilidade, e o Erro Total calculado a "
+            "partir dela subestima o erro da rotina."
+        ),
+    )
+
     data_inicio = models.DateField("data de início", default=timezone.localdate)
     data_conclusao = models.DateField("data de conclusão", null=True, blank=True)
     situacao = models.CharField("situação", max_length=12, choices=SITUACOES, default=RASCUNHO)
@@ -102,6 +115,18 @@ class Estudo(models.Model):
             raise ValidationError(
                 {"sistema_comparacao": "O sistema de comparação precisa ser diferente do sistema em teste."}
             )
+
+    def avalia_precisao(self) -> bool:
+        return self.modulo in (Assinatura.PRECISAO, Assinatura.COMPLETO)
+
+    def avalia_comparabilidade(self) -> bool:
+        return self.modulo in (Assinatura.COMPARABILIDADE, Assinatura.COMPLETO)
+
+    def minimo_replicas_por_nivel(self) -> int:
+        """Quantas réplicas o desenho escolhido exige em cada nível de controle."""
+        if self.desenho_precisao == precisao.DESENHO_CORRIDA_UNICA:
+            return precisao.MINIMO_REPLICAS_CORRIDA_UNICA
+        return precisao.MINIMO_CORRIDAS * precisao.MINIMO_REPLICAS_POR_CORRIDA
 
     def editavel(self) -> bool:
         """Estudo liberado é registro de qualidade: não se edita, cancela-se."""

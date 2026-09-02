@@ -10,13 +10,13 @@ O que já está pronto e testado:
 
 | Parte | Situação |
 |---|---|
-| Motor de cálculo (estatística) | ✅ Pronto — 59 testes automatizados |
+| Motor de cálculo (estatística) | ✅ Pronto — 90 testes automatizados |
+| Gráficos (regressão, Bland-Altman, Levey-Jennings) | ✅ Pronto — SVG sem dependências |
 | Modelos de dados e rastreabilidade | ✅ Pronto — 8 testes automatizados |
 | Cadastro de laboratórios e usuários | ✅ Pronto (painel administrativo) |
 | Controle dos módulos contratados | ✅ Pronto |
 | Telas para o laboratório usar | ⏳ A fazer |
 | Relatório em PDF | ⏳ A fazer |
-| Gráficos (Levey-Jennings, Bland-Altman) | ⏳ A fazer |
 
 ## Os três módulos comercializáveis
 
@@ -30,6 +30,48 @@ A limitação dos módulos isolados não é uma escolha comercial, é uma conseq
 da matemática: o Erro Total é `|bias%| + 1,65 × CV%`. Sem os dois insumos
 medidos no mesmo estudo, ele não existe. O sistema recusa-se a apresentar um
 veredito de validação nesses casos, em vez de estimar a parte que falta.
+
+## Os dois desenhos do estudo de precisão
+
+O laboratório escolhe, e a escolha muda o que o estudo consegue enxergar:
+
+| Desenho | O que mede | O que fica invisível |
+|---|---|---|
+| **Múltiplas corridas** (5 dias × 5 réplicas) | Repetibilidade **e** precisão intermediária | — |
+| **Corrida única** (mínimo 10 réplicas no mesmo dia) | Apenas repetibilidade | Variação entre dias: recalibração, troca de operador, novo frasco de reagente |
+
+A precisão intermediária é sempre maior que a repetibilidade, e é ela que
+representa o método na rotina. Um Erro Total calculado a partir de corrida única
+**subestima** o erro real — o sistema permite o desenho, mas registra o aviso no
+relatório. Esconder essa ressalva seria entregar um número mais bonito do que o
+método merece.
+
+## O que a comparabilidade entrega
+
+| Medida | Pergunta que responde |
+|---|---|
+| Erro sistemático médio | Em média, o método novo lê acima ou abaixo do antigo? |
+| Regressão de Deming e Passing-Bablok | Existe erro constante ou proporcional? |
+| Regressão linear (r e r²) | A faixa de concentrações estudada foi ampla o bastante? |
+| Concordância de Lin (ρc) | Os pontos caem sobre a reta de identidade? |
+| Concordância analítica | Quantas amostras ficaram dentro do Erro Total permitido? |
+| Concordância clínica | Quantas amostras seriam interpretadas do mesmo jeito pelo médico? |
+
+Duas advertências que o relatório sempre imprime:
+
+**r não mede concordância.** Dois métodos podem ter r = 0,999 com um lendo 30%
+acima do outro. Correlação mostra que os pontos seguem *uma* reta, não que seguem
+a reta certa. O coeficiente de Lin é que responde isso, porque separa precisão de
+acurácia.
+
+**A média esconde amostra fora do limite.** Um método pode ter erro sistemático
+médio de 0% e ainda assim ter metade das amostras fora do Erro Total permitido —
+basta que os desvios se cancelem. Por isso a concordância analítica conta amostra
+a amostra.
+
+A concordância clínica exige o **intervalo de referência** cadastrado no
+mensurando. Sem ele o sistema não calcula e diz o porquê, em vez de omitir a
+medida silenciosamente.
 
 ## Como rodar na sua máquina
 
@@ -73,8 +115,10 @@ motor/          Cálculo estatístico puro, sem interface e sem banco de dados
   precisao.py         CLSI EP15 — repetibilidade e precisão intermediária
   comparabilidade.py  CLSI EP09 — Deming, Passing-Bablok, Bland-Altman
   qualitativo.py      CLSI EP12 — sensibilidade, especificidade, kappa
+  concordancia.py     Lin, concordância analítica e concordância clínica
   especificacoes.py   Limites de aceitação (EQA) e suas referências
   veredito.py         Decisão: aprovado, reprovado ou indeterminado
+  graficos.py         Gráficos SVG do relatório, gerados sem dependências
 
 contas/         Laboratórios (clientes), usuários e módulos contratados
 catalogo/       Rastreabilidade: equipamentos, reagentes, calibradores, controles

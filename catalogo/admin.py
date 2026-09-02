@@ -15,9 +15,29 @@ from .models import (
 
 @admin.register(Mensurando)
 class MensurandoAdmin(admin.ModelAdmin):
-    list_display = ["nome", "unidade_medida", "material_biologico", "laboratorio"]
+    list_display = ["nome", "unidade_medida", "material_biologico", "intervalo_referencia", "laboratorio"]
     list_filter = ["laboratorio", "material_biologico"]
     search_fields = ["nome"]
+
+    fieldsets = [
+        ("Identificação", {"fields": ["laboratorio", "nome", "unidade_medida", "material_biologico"]}),
+        (
+            "Intervalo de referência",
+            {
+                "fields": ["referencia_inferior", "referencia_superior"],
+                "description": (
+                    "Necessário para a concordância clínica: é o que permite dizer se os "
+                    "dois métodos classificariam a amostra da mesma forma no laudo."
+                ),
+            },
+        ),
+    ]
+
+    @admin.display(description="intervalo de referência")
+    def intervalo_referencia(self, obj):
+        if not obj.tem_intervalo_referencia():
+            return "— não informado —"
+        return f"{obj.referencia_inferior} a {obj.referencia_superior} {obj.unidade_medida}"
 
 
 class ReagenteInline(admin.TabularInline):

@@ -12,13 +12,17 @@ Módulos:
 - ``comparabilidade``  — CLSI EP09: Deming, Passing-Bablok, Bland-Altman, bias
 - ``qualitativo``      — CLSI EP12: tabela 2×2, sensibilidade, kappa
 - ``especificacoes``   — EQA: limites de aceitação e suas referências
+- ``concordancia``     — Lin, concordância analítica e concordância clínica
 - ``veredito``         — decisão de aprovação, reprovação ou indeterminação
+- ``graficos``         — gráficos SVG do relatório, gerados sem dependências
 """
 
 from . import (  # noqa: F401
     comparabilidade,
+    concordancia,
     especificacoes,
     estatistica,
+    graficos,
     precisao,
     qualitativo,
     veredito,
@@ -28,7 +32,9 @@ __all__ = [
     "estatistica",
     "precisao",
     "comparabilidade",
+    "concordancia",
     "qualitativo",
     "especificacoes",
     "veredito",
+    "graficos",
 ]
