@@ -145,9 +145,24 @@ class TestConteudoDoResultado(TestCase):
         self.client.force_login(self.dono)
         self.resposta = self.client.get(reverse("resultado_estudo", args=[self.estudo.pk]))
 
-    def test_traz_as_secoes_de_calculo(self):
-        for secao in ["Precisão", "Comparabilidade", "Veredito por nível", "Rastreabilidade"]:
-            self.assertContains(self.resposta, secao)
+    def test_traz_as_faixas_do_estudo(self):
+        # A rastreabilidade deixou de ser uma seção única e virou três faixas
+        # condensáveis, cada uma resumida numa linha quando resolvida.
+        for faixa in [
+            "Analito e limites",
+            "Sistemas analíticos",
+            "Insumos e controles",
+            "Precisão",
+            "Comparabilidade",
+            "Veredito por nível",
+        ]:
+            self.assertContains(self.resposta, faixa)
+
+    def test_as_faixas_resolvidas_nascem_fechadas(self):
+        # Só a etapa corrente abre sozinha: é isso que faz a tela caber num olhar.
+        corpo = self.resposta.content.decode()
+        assert corpo.count("<details class=\"cartao faixa\">") >= 3, "faixas de rastreabilidade deveriam nascer condensadas"
+        assert "<details class=\"cartao faixa\" open>" in corpo, "a etapa corrente deveria nascer aberta"
 
     def test_traz_as_medidas_pedidas(self):
         for medida in [
@@ -155,7 +170,8 @@ class TestConteudoDoResultado(TestCase):
             "Regressão de Deming",
             "Passing-Bablok",
             "Concordância de Lin",
-            "Grau de concordância",
+            "Concordância analítica",
+            "Concordância clínica",
         ]:
             self.assertContains(self.resposta, medida)
 
@@ -166,6 +182,12 @@ class TestConteudoDoResultado(TestCase):
 
     def test_mostra_a_referencia_cientifica_de_cada_limite(self):
         self.assertContains(self.resposta, "ControlLab")
+
+    def test_distingue_previa_de_veredito_congelado(self):
+        # O estudo do fixture não foi concluído: o cabeçalho tem de dizer que o
+        # resultado é prévia, não decisão assinada.
+        self.assertContains(self.resposta, "Prévia")
+        self.assertNotContains(self.resposta, "Congelado em")
 
     def test_avisa_quando_faltam_amostras_para_o_ep09(self):
         # O estudo tem 10 amostras; o EP09 pede 40.
@@ -181,3 +203,59 @@ class TestConteudoDoResultado(TestCase):
         resposta = self.client.get(reverse("resultado_estudo", args=[self.estudo.pk]))
 
         self.assertNotContains(resposta, "Validação FT4", status_code=404)
+
+
+class TestQuadro(TestCase):
+    """O quadro precisa colocar cada estudo na coluna certa e dizer o que falta."""
+
+    def setUp(self):
+        self.laboratorio = montar_laboratorio("Lab A", "11.111.111/0001-11")
+        self.dono = Usuario.objects.create_user(
+            username="dono", password="senha-longa-de-teste", laboratorio=self.laboratorio
+        )
+        self.estudo = montar_estudo(self.laboratorio, self.dono)
+        self.url = reverse("quadro")
+
+    def test_o_estudo_aparece_no_quadro(self):
+        self.client.force_login(self.dono)
+
+        resposta = self.client.get(self.url)
+
+        self.assertEqual(resposta.status_code, 200)
+        self.assertContains(resposta, "FT4")
+
+    def test_estudo_com_dados_parciais_fica_em_coletando(self):
+        # 25 réplicas de 25 e 10 amostras de 40: começou, não terminou.
+        self.assertEqual(self.estudo.coluna_quadro(), Estudo.COLUNA_COLETANDO)
+
+    def test_estudo_sem_dado_nenhum_fica_em_rascunho(self):
+        self.estudo.amostras_comparacao.all().delete()
+        Replica.objects.filter(nivel__estudo=self.estudo).delete()
+
+        self.assertEqual(self.estudo.coluna_quadro(), Estudo.COLUNA_RASCUNHO)
+
+    def test_estudo_liberado_fica_na_ultima_coluna(self):
+        self.estudo.situacao = Estudo.LIBERADO
+
+        self.assertEqual(self.estudo.coluna_quadro(), Estudo.COLUNA_LIBERADO)
+
+    def test_a_proxima_acao_diz_quantas_amostras_faltam(self):
+        # A precisão está completa; o que trava é a comparabilidade.
+        self.assertEqual(self.estudo.proxima_acao(), "Faltam 30 amostras")
+
+    def test_a_proxima_acao_aponta_a_replica_seguinte(self):
+        Replica.objects.filter(nivel__estudo=self.estudo, corrida__gte=4).delete()
+
+        self.assertEqual(self.estudo.proxima_acao(), "Nível 1, réplica 16")
+
+    def test_estudo_de_outro_laboratorio_nao_aparece(self):
+        outro = montar_laboratorio("Lab B", "22.222.222/0001-22")
+        intruso = Usuario.objects.create_user(
+            username="intruso", password="senha-longa-de-teste", laboratorio=outro
+        )
+        self.client.force_login(intruso)
+
+        self.assertNotContains(self.client.get(self.url), "FT4")
+
+    def test_visitante_vai_para_o_login(self):
+        self.assertEqual(self.client.get(self.url).status_code, 302)

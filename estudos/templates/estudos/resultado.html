@@ -1,445 +1,537 @@
-{% load l10n %}<!doctype html>
-<html lang="pt-br">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{{ estudo.identificacao }} — Resultado da validação</title>
+{% extends "base.html" %}
+
+{% block titulo %}{{ estudo.mensurando.nome }} — {{ estudo.sistema_teste.equipamento }}{% endblock %}
+
+{% block estilo %}
 <style>
-  /* Mesma paleta dos gráficos: a tela e o PDF precisam parecer o mesmo documento. */
-  :root {
-    --superficie: #fcfcfb;
-    --plano: #f9f9f7;
-    --tinta: #0b0b0b;
-    --tinta-secundaria: #52514e;
-    --tinta-suave: #898781;
-    --grade: #e1e0d9;
-    --borda: #c3c2b7;
-    --aprovado: #0ca30c;
-    --reprovado: #d03b3b;
-    --indeterminado: #fab219;
+  .painel { flex-grow: 1; display: flex; gap: 20px; padding: 20px 24px; align-items: start; }
+  .pilha { flex-grow: 1; min-width: 0; display: flex; flex-direction: column; gap: 11px; }
+  .lateral { width: 316px; flex-shrink: 0; display: flex; flex-direction: column; gap: 11px; position: sticky; top: 16px; }
+
+  /* Faixa condensável. Resolvida vira uma linha com a conclusão; a etapa
+     corrente fica aberta. Comportamento nativo do <details>: sem JavaScript,
+     funciona com teclado e sobrevive à impressão. */
+  .faixa { overflow: hidden; }
+  .faixa > summary {
+    display: flex; align-items: center; gap: 12px; padding: 13px 16px;
+    cursor: pointer; list-style: none; user-select: none;
   }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0; padding: 24px 16px 64px;
-    background: var(--plano); color: var(--tinta);
-    font: 14px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+  .faixa > summary::-webkit-details-marker { display: none; }
+  .faixa > summary:hover { background: var(--faixa); }
+  .faixa[open] > summary { border-bottom: 1px solid var(--grade); }
+  .faixa .corpo { padding: 14px 16px 16px; }
+  .faixa .corpo--recuado { padding-left: 54px; }
+
+  .marcador {
+    display: flex; align-items: center; justify-content: center; width: 26px; height: 26px;
+    border-radius: 50%; flex-shrink: 0; font-size: 12px; font-weight: 700;
   }
-  main { max-width: 900px; margin: 0 auto; }
-  section {
-    background: var(--superficie); border: 1px solid var(--grade);
-    border-radius: 8px; padding: 20px 22px; margin-bottom: 16px;
-  }
-  h1 { font-size: 21px; margin: 0 0 4px; }
-  h2 { font-size: 15px; margin: 0 0 14px; padding-bottom: 8px; border-bottom: 1px solid var(--grade); }
-  h3 { font-size: 13px; margin: 20px 0 8px; color: var(--tinta-secundaria); }
-  p { margin: 0 0 10px; }
-  .sub { color: var(--tinta-secundaria); font-size: 13px; margin: 0 0 16px; }
+  .marcador--pronto { background: var(--aprovado-fundo); color: var(--aprovado); }
+  .marcador--corrente { background: var(--acento-fundo); color: var(--acento); }
+  .marcador--espera { background: var(--leito); color: var(--tinta-3); }
 
-  table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--grade); vertical-align: top; }
-  th { font-weight: 600; color: var(--tinta-secundaria); font-size: 12px; }
-  td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
-  .rotulo { color: var(--tinta-suave); width: 42%; }
-  .referencia { font-size: 12px; color: var(--tinta-suave); }
+  .titulo-faixa { font-size: 13.5px; font-weight: 600; width: 176px; flex-shrink: 0; }
+  .resumo { font-size: 13px; color: var(--tinta-2); flex-grow: 1; min-width: 0;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .separador { color: var(--borda); }
+  .seta { flex-shrink: 0; transition: transform .15s ease; }
+  .faixa[open] > summary .seta { transform: rotate(90deg); }
 
-  .selo {
-    display: inline-flex; align-items: center; gap: 7px;
-    padding: 5px 12px; border-radius: 999px; font-weight: 600; font-size: 13px;
-    border: 1.5px solid currentColor;
-  }
-  .selo--aprovado { color: var(--aprovado); }
-  .selo--reprovado { color: var(--reprovado); }
-  .selo--indeterminado { color: #8a6100; }
-  .marca { font-weight: 700; }
+  .caixas { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+  .caixa { border: 1px solid var(--linha); border-radius: var(--raio-menor); padding: 11px 13px; }
+  .caixa dt { font-size: 10.5px; color: var(--tinta-3); text-transform: uppercase; letter-spacing: .04em; }
+  .caixa dd { margin: 3px 0 5px; font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums;
+              font-family: "Instrument Sans", system-ui, sans-serif; }
+  .caixa .fonte { font-size: 11px; color: var(--tinta-3); line-height: 1.4; }
 
-  .estado { font-weight: 600; font-size: 12px; white-space: nowrap; }
-  .estado--APROVADO { color: var(--aprovado); }
-  .estado--REPROVADO { color: var(--reprovado); }
-  .estado--INDETERMINADO { color: #8a6100; }
+  .medidor { margin-bottom: 13px; }
+  .medidor .linha { display: flex; align-items: baseline; gap: 6px; }
+  .medidor .valor { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums;
+                    font-family: "Instrument Sans", system-ui, sans-serif; }
+  .medidor .trilha { margin-top: 5px; height: 5px; }
 
-  .aviso { border-left: 3px solid var(--indeterminado); background: #fffbf0; padding: 12px 14px; margin-bottom: 10px; font-size: 13px; border-radius: 0 4px 4px 0; }
-  .falta { border-left: 3px solid var(--reprovado); background: #fdf3f3; padding: 12px 14px; margin-bottom: 10px; font-size: 13px; border-radius: 0 4px 4px 0; }
-  .vazio { color: var(--tinta-suave); font-style: italic; }
+  .lista-falta { display: flex; flex-direction: column; gap: 9px; font-size: 12.5px; }
+  .lista-falta li { display: flex; align-items: center; gap: 9px; }
+  .anel { width: 14px; height: 14px; border: 2px solid var(--linha); border-radius: 50%; flex-shrink: 0; }
+  .anel--agora { border-color: var(--acento); display: flex; align-items: center; justify-content: center; }
+  .anel--agora::after { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--acento); }
+  ul { list-style: none; margin: 0; padding: 0; }
 
-  .colunas { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
   .grafico { margin: 14px 0 4px; overflow-x: auto; }
-  .nota { font-size: 12px; color: var(--tinta-suave); margin-top: 8px; }
+  .nivel { margin-bottom: 18px; }
+  .rotulo { font-size: 10.5px; color: var(--tinta-3); text-transform: uppercase; letter-spacing: .05em; font-weight: 600; }
 
-  @media (max-width: 720px) { .colunas { grid-template-columns: 1fr; } }
-  @media print {
-    body { background: #fff; padding: 0; }
-    section { border: none; border-top: 1px solid var(--grade); border-radius: 0; page-break-inside: avoid; }
-  }
+  @media (max-width: 1180px) { .painel { flex-direction: column; } .lateral { width: 100%; position: static; } }
 </style>
-</head>
-<body>
-<main>
+{% endblock %}
 
-<section>
-  <h1>{{ estudo.identificacao }}</h1>
-  <p class="sub">
-    {{ estudo.mensurando.nome }} — {{ estudo.mensurando.unidade_medida }} —
-    {{ estudo.mensurando.material_biologico }} · {{ estudo.get_tipo_display }}
-  </p>
-
-  {% if tipo == "quantitativo" %}
-    {% with s=veredito.status %}
-    <span class="selo selo--{{ s|lower }}">
-      <span class="marca">{% if s == "APROVADO" %}✓{% elif s == "REPROVADO" %}✕{% else %}?{% endif %}</span>
-      {{ s }}
-    </span>
-    {% endwith %}
-  {% endif %}
-
-  <table style="margin-top:18px">
-    <tr><td class="rotulo">Laboratório</td><td>{{ estudo.laboratorio }}</td></tr>
-    <tr><td class="rotulo">Módulo do estudo</td><td>{{ estudo.get_modulo_display }}</td></tr>
-    {% if modulo_efetivo != estudo.modulo %}
-    <tr><td class="rotulo">Módulo aplicado hoje</td><td><strong>{{ modulo_efetivo|default:"nenhum módulo vigente" }}</strong> — a assinatura do laboratório mudou desde a criação do estudo</td></tr>
-    {% endif %}
-    <tr><td class="rotulo">Desenho da precisão</td><td>{{ estudo.get_desenho_precisao_display }}</td></tr>
-    <tr><td class="rotulo">Período</td><td>{{ estudo.data_inicio|date:"d/m/Y" }}{% if estudo.data_conclusao %} a {{ estudo.data_conclusao|date:"d/m/Y" }}{% endif %}</td></tr>
-    <tr><td class="rotulo">Situação</td><td>{{ estudo.get_situacao_display }}</td></tr>
-    <tr><td class="rotulo">Responsável pelo registro</td><td>{{ estudo.criado_por.get_full_name|default:estudo.criado_por.username }}</td></tr>
-  </table>
-</section>
-
-{% if pendencias_especificacao %}
-<section>
-  <h2>Pendências que impedem a aprovação</h2>
-  {% for pendencia in pendencias_especificacao %}
-    <div class="falta">{{ pendencia|capfirst }}.</div>
-  {% endfor %}
-  <p class="nota">Um limite de aceitação sem referência científica declarada não sustenta auditoria. Enquanto houver pendência aqui, o estudo não pode ser aprovado.</p>
-</section>
-{% endif %}
-
-{% if avisos %}
-<section>
-  <h2>Ressalvas do estudo</h2>
-  {% for aviso in avisos %}<div class="aviso">{{ aviso }}</div>{% endfor %}
-  <p class="nota">Estas ressalvas acompanham o relatório. Elas não reprovam o método, mas delimitam o que o estudo conseguiu demonstrar.</p>
-</section>
-{% endif %}
-
-<section>
-  <h2>Rastreabilidade</h2>
-  <div class="colunas">
-    <div>
-      <h3>Sistema em teste (S.A.t)</h3>
-      <table>
-        <tr><td class="rotulo">Equipamento</td><td>{{ estudo.sistema_teste.equipamento }}</td></tr>
-        <tr><td class="rotulo">Número de série</td><td>{{ estudo.sistema_teste.numero_serie }}</td></tr>
-        <tr><td class="rotulo">Metodologia</td><td>{{ estudo.sistema_teste.metodologia }}</td></tr>
-        <tr><td class="rotulo">Intervalo analítico</td><td>{{ estudo.sistema_teste.intervalo_analitico_minimo|default:"—" }} a {{ estudo.sistema_teste.intervalo_analitico_maximo|default:"—" }}</td></tr>
-      </table>
-      {% for reagente in estudo.sistema_teste.reagentes.all %}
-        <table><tr><td class="rotulo">Reagente</td><td>{{ reagente.nome }}<br><span class="referencia">lote {{ reagente.lote }} · validade {{ reagente.validade|date:"d/m/Y" }}</span></td></tr></table>
-      {% endfor %}
-      {% for calibrador in estudo.sistema_teste.calibradores.all %}
-        <table><tr><td class="rotulo">Calibrador</td><td>{{ calibrador.nome }}<br><span class="referencia">lote {{ calibrador.lote }} · validade {{ calibrador.validade|date:"d/m/Y" }}</span></td></tr></table>
-      {% endfor %}
-    </div>
-    <div>
-      <h3>Sistema de comparação (S.A.c)</h3>
-      {% if estudo.sistema_comparacao %}
-      <table>
-        <tr><td class="rotulo">Equipamento</td><td>{{ estudo.sistema_comparacao.equipamento }}</td></tr>
-        <tr><td class="rotulo">Número de série</td><td>{{ estudo.sistema_comparacao.numero_serie }}</td></tr>
-        <tr><td class="rotulo">Metodologia</td><td>{{ estudo.sistema_comparacao.metodologia }}</td></tr>
-        <tr><td class="rotulo">Intervalo analítico</td><td>{{ estudo.sistema_comparacao.intervalo_analitico_minimo|default:"—" }} a {{ estudo.sistema_comparacao.intervalo_analitico_maximo|default:"—" }}</td></tr>
-      </table>
-      {% for reagente in estudo.sistema_comparacao.reagentes.all %}
-        <table><tr><td class="rotulo">Reagente</td><td>{{ reagente.nome }}<br><span class="referencia">lote {{ reagente.lote }} · validade {{ reagente.validade|date:"d/m/Y" }}</span></td></tr></table>
-      {% endfor %}
-      {% else %}
-        <p class="vazio">Estudo sem sistema de comparação.</p>
-      {% endif %}
-
-      <h3>Intervalo de referência</h3>
-      {% if estudo.mensurando.tem_intervalo_referencia %}
-        <p>{{ estudo.mensurando.referencia_inferior }} a {{ estudo.mensurando.referencia_superior }} {{ estudo.mensurando.unidade_medida }}</p>
-      {% else %}
-        <p class="vazio">Não informado — a concordância clínica não pode ser calculada.</p>
-      {% endif %}
-    </div>
+{% block corpo %}
+<div class="barra">
+  <a href="{% url 'quadro' %}" class="botao" style="width: 34px; padding: 0; justify-content: center" title="Voltar ao quadro">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 6l-6 6 6 6"/></svg>
+  </a>
+  <div>
+    <h1 class="display">{{ estudo.mensurando.nome }} &middot; {{ estudo.sistema_teste.equipamento }} {{ estudo.sistema_teste.numero_serie }}</h1>
+    <p class="sub">
+      {{ estudo.identificacao }} &middot; iniciada em {{ estudo.data_inicio|date:"d/m/Y" }} &middot;
+      módulo {{ estudo.modulo_curto }} &middot; {{ estudo.desenho_curto }}
+    </p>
   </div>
+  <div class="cresce"></div>
+  {% if tipo == "quantitativo" %}
+    {% comment %}
+      Enquanto o estudo não é concluído, este número é prévia: recalcula a cada
+      carregamento e muda se a ficha do analito mudar. Só depois de congelado ele
+      é veredito. Sem essa distinção o laboratório lê "REPROVADO" numa tela de
+      trabalho e acha que já foi decidido.
+    {% endcomment %}
+    <div style="text-align: right">
+      {% with s=veredito.status %}
+      <span class="estado estado--{{ s }}">
+        {% if s == "APROVADO" %}&#10003;{% elif s == "REPROVADO" %}&#10007;{% else %}?{% endif %} {{ s }}
+      </span>
+      {% endwith %}
+      <div class="nota" style="margin-top: 4px">
+        {% if estudo.veredito %}
+          Congelado em {{ estudo.veredito.calculado_em|date:"d/m/Y" }} &middot; motor {{ estudo.veredito.versao_motor }}
+        {% else %}
+          Prévia — recalculada a cada acesso
+        {% endif %}
+      </div>
+    </div>
+  {% endif %}
+</div>
 
-  <h3>Materiais de controle</h3>
-  <table>
-    <tr><th>Nível</th><th>Material</th><th>Lote</th><th>Validade</th><th class="n">Valor alvo</th></tr>
-    {% for item in precisao %}
-    <tr>
-      <td>{{ item.numero }}</td>
-      <td>{{ item.nivel.controle.nome }}</td>
-      <td>{{ item.nivel.controle.lote }}</td>
-      <td>{{ item.nivel.controle.validade|date:"d/m/Y" }}</td>
-      <td class="n">{{ item.nivel.controle.valor_alvo|default:"—" }}</td>
-    </tr>
-    {% empty %}
-    <tr><td colspan="5" class="vazio">Nenhum nível cadastrado.</td></tr>
-    {% endfor %}
-  </table>
-</section>
+<div class="painel">
+  <div class="pilha">
 
-<section>
-  <h2>Especificação da qualidade analítica</h2>
-  <table>
-    <tr><th>Indicador</th><th class="n">Limite</th><th>Referência científica</th></tr>
-    <tr>
-      <td>Erro total máximo</td>
-      <td class="n">{{ estudo.especificacao.erro_total_maximo_pct|default:"—" }}%</td>
-      <td class="referencia">{{ estudo.especificacao.erro_total_referencia|default:"—" }}</td>
-    </tr>
-    <tr>
-      <td>Erro sistemático (bias) máximo</td>
-      <td class="n">{{ estudo.especificacao.bias_maximo_pct|default:"—" }}%</td>
-      <td class="referencia">{{ estudo.especificacao.bias_referencia|default:"—" }}</td>
-    </tr>
-    {% for limite in estudo.especificacao.limites_imprecisao.all %}
-    <tr>
-      <td>Imprecisão máxima — nível {{ limite.nivel }}</td>
-      <td class="n">{{ limite.maximo_pct }}%</td>
-      <td class="referencia">{{ limite.referencia }}</td>
-    </tr>
-    {% endfor %}
-    {% if estudo.especificacao.erro_total_maximo_absoluto %}
-    <tr>
-      <td>Erro total absoluto (resultados ≤ {{ estudo.especificacao.erro_total_limiar_absoluto }})</td>
-      <td class="n">± {{ estudo.especificacao.erro_total_maximo_absoluto }}</td>
-      <td class="referencia">{{ estudo.especificacao.erro_total_referencia_absoluto|default:"—" }}</td>
-    </tr>
+    {% if pendencias_especificacao %}
+    <section class="cartao" style="padding: 16px 18px">
+      <h2 style="font-size: 13px; margin: 0 0 11px">Pendências que impedem a aprovação</h2>
+      {% for pendencia in pendencias_especificacao %}<div class="falta">{{ pendencia|capfirst }}.</div>{% endfor %}
+      <p class="nota">Um limite sem referência científica declarada não sustenta auditoria.</p>
+    </section>
     {% endif %}
-  </table>
-</section>
+
+    {% if avisos %}
+    <section class="cartao" style="padding: 16px 18px">
+      <h2 style="font-size: 13px; margin: 0 0 11px">Ressalvas do estudo</h2>
+      {% for aviso in avisos %}<div class="aviso">{{ aviso }}</div>{% endfor %}
+      <p class="nota">Estas ressalvas acompanham o relatório. Não reprovam o método — delimitam o que o estudo demonstrou.</p>
+    </section>
+    {% endif %}
+
+    <!-- 1. Analito e limites -->
+    <details class="cartao faixa">
+      <summary>
+        <span class="marcador marcador--pronto">&#10003;</span>
+        <span class="titulo-faixa">Analito e limites</span>
+        <span class="resumo">
+          {{ estudo.mensurando.nome }} &middot; {{ estudo.mensurando.unidade_medida }} &middot; {{ estudo.mensurando.material_biologico }}
+          <span class="separador">&nbsp;|&nbsp;</span>
+          ET {{ estudo.especificacao.erro_total_maximo_pct|default_if_none:"—" }}% &middot;
+          bias {{ estudo.especificacao.bias_maximo_pct|default_if_none:"—" }}%
+          <span class="separador">&nbsp;|&nbsp;</span> {{ estudo.especificacao.nome }}
+        </span>
+        <span class="selo selo--acento">herdado da ficha</span>
+        <svg class="seta" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--tinta-3)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>
+      </summary>
+      <div class="corpo corpo--recuado">
+        <p class="nota" style="margin: 0 0 12px">Estes valores vieram da ficha do analito.</p>
+        <dl class="caixas" style="margin: 0">
+          <div class="caixa">
+            <dt>Erro total máximo</dt>
+            <dd>{{ estudo.especificacao.erro_total_maximo_pct|default_if_none:"—" }}%</dd>
+            <div class="fonte">{{ estudo.especificacao.erro_total_referencia|default:"sem referência declarada" }}</div>
+          </div>
+          <div class="caixa">
+            <dt>Bias máximo</dt>
+            <dd>{{ estudo.especificacao.bias_maximo_pct|default_if_none:"—" }}%</dd>
+            <div class="fonte">{{ estudo.especificacao.bias_referencia|default:"sem referência declarada" }}</div>
+          </div>
+          <div class="caixa">
+            <dt>Imprecisão máxima</dt>
+            <dd>{% for limite in estudo.especificacao.limites_imprecisao.all %}{% if forloop.first %}{{ limite.maximo_pct }}%{% endif %}{% empty %}—{% endfor %}</dd>
+            <div class="fonte">{% for limite in estudo.especificacao.limites_imprecisao.all %}{% if forloop.first %}{{ limite.referencia }}{% endif %}{% empty %}não definida{% endfor %}</div>
+          </div>
+        </dl>
+        {% if estudo.especificacao.sub_limites_excedem_o_erro_total %}
+        <p class="nota" style="margin-top: 12px">
+          No limite do bias e da imprecisão, o erro total daria
+          <strong class="num">{{ estudo.especificacao.erro_total_implicito|floatformat:1 }}%</strong> —
+          acima do próprio máximo. É uma tensão da convenção das frações, não um erro do cálculo.
+        </p>
+        {% endif %}
+        <p style="margin: 12px 0 0"><a href="/admin/catalogo/especificacaoqualidade/{{ estudo.especificacao.pk }}/change/">Abrir a ficha do analito &rarr;</a></p>
+      </div>
+    </details>
+
+    <!-- 2. Sistemas -->
+    <details class="cartao faixa">
+      <summary>
+        <span class="marcador marcador--pronto">&#10003;</span>
+        <span class="titulo-faixa">Sistemas analíticos</span>
+        <span class="resumo">
+          {{ estudo.sistema_teste.equipamento }} {{ estudo.sistema_teste.numero_serie }}
+          {% if estudo.sistema_comparacao %}&nbsp;&rarr;&nbsp; {{ estudo.sistema_comparacao.equipamento }} {{ estudo.sistema_comparacao.numero_serie }}{% endif %}
+          <span class="separador">&nbsp;|&nbsp;</span> {{ estudo.sistema_teste.metodologia }}
+        </span>
+        <svg class="seta" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--tinta-3)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>
+      </summary>
+      <div class="corpo corpo--recuado" style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px">
+        <div class="caixa">
+          <div class="rotulo" style="color: var(--acento)">Em teste (S.A.t)</div>
+          <div class="display" style="font-size: 15px; font-weight: 600; margin: 4px 0 2px">{{ estudo.sistema_teste.equipamento }}</div>
+          <div class="fonte">
+            Série {{ estudo.sistema_teste.numero_serie }} &middot; {{ estudo.sistema_teste.metodologia }}
+            {% if estudo.sistema_teste.intervalo_analitico_minimo %} &middot; {{ estudo.sistema_teste.intervalo_analitico_minimo }} a {{ estudo.sistema_teste.intervalo_analitico_maximo }}{% endif %}
+          </div>
+        </div>
+        {% if estudo.sistema_comparacao %}
+        <div class="caixa">
+          <div class="rotulo">Comparação (S.A.c)</div>
+          <div class="display" style="font-size: 15px; font-weight: 600; margin: 4px 0 2px">{{ estudo.sistema_comparacao.equipamento }}</div>
+          <div class="fonte">
+            Série {{ estudo.sistema_comparacao.numero_serie }} &middot; {{ estudo.sistema_comparacao.metodologia }}
+            {% if estudo.sistema_comparacao.intervalo_analitico_minimo %} &middot; {{ estudo.sistema_comparacao.intervalo_analitico_minimo }} a {{ estudo.sistema_comparacao.intervalo_analitico_maximo }}{% endif %}
+          </div>
+        </div>
+        {% endif %}
+      </div>
+    </details>
+
+    <!-- 3. Insumos -->
+    <details class="cartao faixa">
+      <summary>
+        <span class="marcador marcador--pronto">&#10003;</span>
+        <span class="titulo-faixa">Insumos e controles</span>
+        <span class="resumo">
+          {% for reagente in estudo.sistema_teste.reagentes.all %}{% if forloop.first %}Reagente {{ reagente.lote }}{% endif %}{% endfor %}
+          {% for calibrador in estudo.sistema_teste.calibradores.all %}{% if forloop.first %} &middot; Calibrador {{ calibrador.lote }}{% endif %}{% endfor %}
+          &middot; {{ precisao|length }} níve{{ precisao|length|pluralize:"l,is" }} de controle
+        </span>
+        <svg class="seta" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--tinta-3)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>
+      </summary>
+      <div class="corpo corpo--recuado" style="padding-top: 4px">
+        <table>
+          <tr><th>Item</th><th>Nome</th><th>Lote</th><th>Validade</th></tr>
+          {% for reagente in estudo.sistema_teste.reagentes.all %}
+          <tr><td style="color: var(--tinta-3)">Reagente</td><td>{{ reagente.nome }}</td><td class="num">{{ reagente.lote }}</td><td class="num">{{ reagente.validade|date:"d/m/Y" }}</td></tr>
+          {% endfor %}
+          {% for calibrador in estudo.sistema_teste.calibradores.all %}
+          <tr><td style="color: var(--tinta-3)">Calibrador</td><td>{{ calibrador.nome }}</td><td class="num">{{ calibrador.lote }}</td><td class="num">{{ calibrador.validade|date:"d/m/Y" }}</td></tr>
+          {% endfor %}
+          {% for item in precisao %}
+          <tr><td style="color: var(--tinta-3)">Controle {{ item.numero }}</td><td>{{ item.nivel.controle.nome }}</td><td class="num">{{ item.nivel.controle.lote }}</td><td class="num">{{ item.nivel.controle.validade|date:"d/m/Y" }}</td></tr>
+          {% endfor %}
+        </table>
+      </div>
+    </details>
 
 {% if tipo == "qualitativo" %}
-<section>
-  <h2>Desempenho do método qualitativo</h2>
-  {% if qualitativo.tem_dados %}
-    {% with d=qualitativo.desempenho t=qualitativo.tabela %}
-    <table>
-      <tr><th>Indicador</th><th class="n">Valor</th><th class="n">IC 95%</th></tr>
-      <tr><td>Sensibilidade</td><td class="n">{{ d.sensibilidade_pct|floatformat:1|default:"—" }}%</td><td class="n">{% if d.sensibilidade_ic95 %}{{ d.sensibilidade_ic95.0|floatformat:1 }} – {{ d.sensibilidade_ic95.1|floatformat:1 }}%{% else %}—{% endif %}</td></tr>
-      <tr><td>Especificidade</td><td class="n">{{ d.especificidade_pct|floatformat:1|default:"—" }}%</td><td class="n">{% if d.especificidade_ic95 %}{{ d.especificidade_ic95.0|floatformat:1 }} – {{ d.especificidade_ic95.1|floatformat:1 }}%{% else %}—{% endif %}</td></tr>
-      <tr><td>Concordância total</td><td class="n">{{ d.concordancia_pct|floatformat:1|default:"—" }}%</td><td class="n">{% if d.concordancia_ic95 %}{{ d.concordancia_ic95.0|floatformat:1 }} – {{ d.concordancia_ic95.1|floatformat:1 }}%{% else %}—{% endif %}</td></tr>
-      <tr><td>Kappa de Cohen</td><td class="n">{{ d.kappa|floatformat:3|default:"—" }}</td><td class="n">{{ d.classificacao_kappa }}</td></tr>
-    </table>
-    <h3>Tabela 2×2</h3>
-    <table>
-      <tr><th></th><th class="n">Referência reagente</th><th class="n">Referência não reagente</th></tr>
-      <tr><td>Teste reagente</td><td class="n">{{ t.verdadeiros_positivos }}</td><td class="n">{{ t.falsos_positivos }}</td></tr>
-      <tr><td>Teste não reagente</td><td class="n">{{ t.falsos_negativos }}</td><td class="n">{{ t.verdadeiros_negativos }}</td></tr>
-    </table>
-    <p class="nota">Os valores preditivos refletem a prevalência da amostra estudada ({{ d.prevalencia_amostra_pct|floatformat:1 }}%), que raramente é a da população atendida pelo laboratório.</p>
-    {% endwith %}
-  {% else %}
-    <p class="vazio">{{ qualitativo.motivo|capfirst }}.</p>
-  {% endif %}
-</section>
+    <details class="cartao faixa" open>
+      <summary>
+        <span class="marcador marcador--corrente">4</span>
+        <span class="titulo-faixa">Desempenho qualitativo</span>
+        <span class="resumo">Concordância com o método de referência</span>
+        <svg class="seta" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--tinta-3)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>
+      </summary>
+      <div class="corpo">
+        {% if qualitativo.tem_dados %}
+          {% with d=qualitativo.desempenho t=qualitativo.tabela %}
+          <table>
+            <tr><th>Indicador</th><th class="n">Valor</th><th class="n">IC 95%</th></tr>
+            <tr><td>Sensibilidade</td><td class="n">{{ d.sensibilidade_pct|floatformat:1|default:"—" }}%</td><td class="n">{% if d.sensibilidade_ic95 %}{{ d.sensibilidade_ic95.0|floatformat:1 }} – {{ d.sensibilidade_ic95.1|floatformat:1 }}%{% else %}—{% endif %}</td></tr>
+            <tr><td>Especificidade</td><td class="n">{{ d.especificidade_pct|floatformat:1|default:"—" }}%</td><td class="n">{% if d.especificidade_ic95 %}{{ d.especificidade_ic95.0|floatformat:1 }} – {{ d.especificidade_ic95.1|floatformat:1 }}%{% else %}—{% endif %}</td></tr>
+            <tr><td>Concordância total</td><td class="n">{{ d.concordancia_pct|floatformat:1|default:"—" }}%</td><td class="n">{% if d.concordancia_ic95 %}{{ d.concordancia_ic95.0|floatformat:1 }} – {{ d.concordancia_ic95.1|floatformat:1 }}%{% else %}—{% endif %}</td></tr>
+            <tr><td>Kappa de Cohen</td><td class="n">{{ d.kappa|floatformat:3|default:"—" }}</td><td class="n">{{ d.classificacao_kappa }}</td></tr>
+          </table>
+          <p class="nota" style="margin-top: 12px">Os valores preditivos refletem a prevalência da amostra estudada ({{ d.prevalencia_amostra_pct|floatformat:1 }}%), que raramente é a da população atendida.</p>
+          {% endwith %}
+        {% else %}
+          <p class="vazio">{{ qualitativo.motivo|capfirst }}.</p>
+        {% endif %}
+      </div>
+    </details>
 
 {% else %}
+    <!-- 4. Precisão -->
+    <details class="cartao faixa" open>
+      <summary>
+        <span class="marcador {% if andamento.precisao_pct == 100 %}marcador--pronto{% else %}marcador--corrente{% endif %}">{% if andamento.precisao_pct == 100 %}&#10003;{% else %}4{% endif %}</span>
+        <span class="titulo-faixa">Precisão</span>
+        <span class="resumo">{{ estudo.get_desenho_precisao_display }}</span>
+        <span class="num" style="font-size: 11.5px; font-weight: 600; color: var(--acento); flex-shrink: 0">
+          {{ andamento.precisao_feita }} de {{ andamento.precisao_total }} réplicas
+        </span>
+        <svg class="seta" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--tinta-3)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>
+      </summary>
+      <div class="corpo">
+        {% if precisao %}
+        <table style="margin-bottom: 14px">
+          <tr>
+            <th>Nível</th><th class="n">n</th><th class="n">Média</th>
+            <th class="n">CV repetibilidade</th><th class="n">CV intermediária</th>
+            <th class="n">Limite</th><th>Situação</th>
+          </tr>
+          {% for item in precisao %}
+          <tr>
+            <td>{{ item.numero }}</td>
+            <td class="n">{{ item.estatistica.n_total }}</td>
+            <td class="n">{{ item.estatistica.media|floatformat:3|default:"—" }}</td>
+            <td class="n">{{ item.estatistica.cv_repetibilidade|floatformat:2|default:"—" }}%</td>
+            <td class="n"><strong>{{ item.estatistica.cv_intermediaria|floatformat:2|default:"—" }}</strong>{% if item.estatistica.cv_intermediaria %}%{% endif %}</td>
+            {% for indicador in item.avaliacao.indicadores %}{% if indicador.indicador == "imprecisão" %}
+              <td class="n">{{ indicador.limite_pct|floatformat:2|default:"—" }}%</td>
+              <td><span class="estado estado--{{ indicador.status }}" style="border: none; padding: 0">{{ indicador.status }}</span></td>
+            {% endif %}{% endfor %}
+          </tr>
+          {% endfor %}
+        </table>
+        <p class="nota">
+          O CV que alimenta o erro total é o
+          <strong>{{ precisao.0.estatistica.tipo_cv_aplicavel|default:"—" }}</strong>: inclui a variação entre
+          corridas e representa o método na rotina.
+        </p>
 
-<section>
-  <h2>Precisão</h2>
-  <p class="sub">{{ estudo.get_desenho_precisao_display }}</p>
+        {% for grafico in graficos.levey_jennings %}
+          <div class="grafico">{{ grafico.svg|safe }}</div>
+        {% endfor %}
+        {% else %}
+        <p class="vazio">Nenhum nível de controle cadastrado neste estudo.</p>
+        {% endif %}
+      </div>
+    </details>
 
-  {% if precisao %}
-  <table>
-    <tr>
-      <th>Nível</th><th class="n">n</th><th class="n">Média</th>
-      <th class="n">CV repetibilidade</th><th class="n">CV intermediária</th>
-      <th class="n">Limite</th><th>Situação</th>
-    </tr>
-    {% for item in precisao %}
-    <tr>
-      <td>{{ item.numero }}</td>
-      <td class="n">{{ item.estatistica.n_total }}</td>
-      <td class="n">{{ item.estatistica.media|floatformat:3|default:"—" }}</td>
-      <td class="n">{{ item.estatistica.cv_repetibilidade|floatformat:2|default:"—" }}%</td>
-      <td class="n"><strong>{{ item.estatistica.cv_intermediaria|floatformat:2|default:"—" }}</strong>{% if item.estatistica.cv_intermediaria %}%{% endif %}</td>
-      {% for indicador in item.avaliacao.indicadores %}{% if indicador.indicador == "imprecisão" %}
-        <td class="n">{{ indicador.limite_pct|floatformat:2|default:"—" }}%</td>
-        <td class="estado estado--{{ indicador.status }}">{{ indicador.status }}</td>
-      {% endif %}{% endfor %}
-    </tr>
-    {% endfor %}
-  </table>
-  <p class="nota">
-    O CV que alimenta o Erro Total é o
-    <strong>{{ precisao.0.estatistica.tipo_cv_aplicavel|default:"—" }}</strong>.
-    A precisão intermediária inclui a variação entre corridas e é sempre maior ou
-    igual à repetibilidade — ela representa o método na rotina.
-  </p>
+    <!-- 5. Comparabilidade -->
+    <details class="cartao faixa" {% if comparabilidade.tem_dados %}open{% endif %}>
+      <summary>
+        <span class="marcador {% if andamento.comparacao_pct == 100 %}marcador--pronto{% elif comparabilidade.tem_dados %}marcador--corrente{% else %}marcador--espera{% endif %}">{% if andamento.comparacao_pct == 100 %}&#10003;{% else %}5{% endif %}</span>
+        <span class="titulo-faixa">Comparabilidade</span>
+        <span class="resumo">Amostras de paciente nos dois sistemas</span>
+        <span class="num" style="font-size: 11.5px; color: var(--tinta-3); flex-shrink: 0">
+          {{ andamento.comparacao_feita }} de {{ andamento.comparacao_total }} amostras
+        </span>
+        <svg class="seta" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--tinta-3)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>
+      </summary>
+      <div class="corpo">
+        {% if comparabilidade.tem_dados %}
+          {% with c=comparabilidade %}
+          <table>
+            <tr><th>Medida</th><th class="n">Resultado</th><th>Leitura</th></tr>
+            <tr>
+              <td>Erro sistemático médio</td>
+              <td class="n">{{ c.erro_sistematico.erro_medio|floatformat:4|default:"—" }}</td>
+              <td class="nota">média das diferenças percentuais: {{ c.erro_sistematico.erro_medio_pct|floatformat:2|default:"—" }}% &middot; razão das médias: {{ c.erro_sistematico.erro_medio_pct_ponderado|floatformat:2|default:"—" }}%</td>
+            </tr>
+            <tr>
+              <td>Regressão de Deming</td>
+              <td class="n">y = {{ c.deming.inclinacao|floatformat:4|default:"—" }}x {% if c.deming.intercepto >= 0 %}+{% endif %} {{ c.deming.intercepto|floatformat:4|default:"—" }}</td>
+              <td class="nota">admite erro nos dois eixos — é a que julga erro proporcional</td>
+            </tr>
+            <tr>
+              <td>Regressão de Passing-Bablok</td>
+              <td class="n">y = {{ c.passing_bablok.inclinacao|floatformat:4|default:"—" }}x {% if c.passing_bablok.intercepto >= 0 %}+{% endif %} {{ c.passing_bablok.intercepto|floatformat:4|default:"—" }}</td>
+              <td class="nota">não paramétrica, resistente a valores discrepantes</td>
+            </tr>
+            <tr>
+              <td>Regressão linear</td>
+              <td class="n">r = {{ c.regressao.r|floatformat:4|default:"—" }} &middot; r² = {{ c.regressao.r2|floatformat:4|default:"—" }}</td>
+              <td class="nota">r indica se a faixa estudada foi ampla o bastante — <strong>não mede concordância</strong></td>
+            </tr>
+            <tr>
+              <td>Concordância de Lin (ρc)</td>
+              <td class="n">{{ c.lin.ccc|floatformat:4|default:"—" }}</td>
+              <td class="nota">{{ c.lin.classificacao }} &middot; precisão {{ c.lin.componente_precisao|floatformat:4|default:"—" }} × acurácia {{ c.lin.componente_acuracia|floatformat:4|default:"—" }}</td>
+            </tr>
+            <tr>
+              <td>Viés médio (Bland-Altman)</td>
+              <td class="n">{{ c.bland_altman.vies|floatformat:4|default:"—" }}</td>
+              <td class="nota">limites: {{ c.bland_altman.limite_inferior|floatformat:4|default:"—" }} a {{ c.bland_altman.limite_superior|floatformat:4|default:"—" }}</td>
+            </tr>
+            <tr>
+              <td>Concordância analítica</td>
+              <td class="n">{{ c.analitica.concordancia_pct|floatformat:1|default:"—" }}%</td>
+              <td class="nota">{{ c.analitica.dentro_do_limite }} de {{ c.analitica.avaliadas }} amostras dentro do erro total permitido</td>
+            </tr>
+            <tr>
+              <td>Concordância clínica</td>
+              <td class="n">{{ c.clinica.concordancia_pct|floatformat:1|default:"—" }}%</td>
+              <td class="nota">{% if c.clinica.observacao %}{{ c.clinica.observacao|capfirst }}{% else %}{{ c.clinica.concordantes }} de {{ c.clinica.n }} amostras com a mesma interpretação{% endif %}</td>
+            </tr>
+          </table>
 
-  {% for grafico in graficos.levey_jennings %}
-    <div class="grafico">{{ grafico.svg|safe }}</div>
-  {% endfor %}
-  {% else %}
-    <p class="vazio">Nenhum nível de controle cadastrado neste estudo.</p>
-  {% endif %}
-</section>
+          <p class="nota" style="margin-top: 12px">
+            r e ρc respondem perguntas diferentes: r diz se os pontos formam <em>uma</em> reta;
+            ρc diz se formam <em>a</em> reta de identidade.
+          </p>
 
-<section>
-  <h2>Comparabilidade</h2>
-  {% if comparabilidade.tem_dados %}
-    {% with c=comparabilidade %}
-    <table>
-      <tr><th>Medida</th><th class="n">Resultado</th><th>Leitura</th></tr>
-      <tr>
-        <td>Amostras pareadas</td>
-        <td class="n">{{ c.n }}</td>
-        <td class="referencia">{% if c.deming.atende_minimo_ep09 %}atende ao mínimo do EP09 (40){% else %}abaixo do mínimo do EP09 (40){% endif %}</td>
-      </tr>
-      <tr>
-        <td>Erro sistemático médio</td>
-        <td class="n">{{ c.erro_sistematico.erro_medio|floatformat:4|default:"—" }}</td>
-        <td class="referencia">
-          média das diferenças percentuais: {{ c.erro_sistematico.erro_medio_pct|floatformat:2|default:"—" }}% ·
-          razão das médias: {{ c.erro_sistematico.erro_medio_pct_ponderado|floatformat:2|default:"—" }}%
-        </td>
-      </tr>
-      <tr>
-        <td>Regressão de Deming</td>
-        <td class="n">y = {{ c.deming.inclinacao|floatformat:4|default:"—" }}x {% if c.deming.intercepto >= 0 %}+{% endif %} {{ c.deming.intercepto|floatformat:4|default:"—" }}</td>
-        <td class="referencia">admite erro nos dois eixos — é a que julga erro proporcional</td>
-      </tr>
-      <tr>
-        <td>Regressão de Passing-Bablok</td>
-        <td class="n">y = {{ c.passing_bablok.inclinacao|floatformat:4|default:"—" }}x {% if c.passing_bablok.intercepto >= 0 %}+{% endif %} {{ c.passing_bablok.intercepto|floatformat:4|default:"—" }}</td>
-        <td class="referencia">não paramétrica, resistente a valores discrepantes</td>
-      </tr>
-      <tr>
-        <td>Regressão linear (mínimos quadrados)</td>
-        <td class="n">r = {{ c.regressao.r|floatformat:4|default:"—" }} · r² = {{ c.regressao.r2|floatformat:4|default:"—" }}</td>
-        <td class="referencia">r indica se a faixa estudada foi ampla o bastante — <strong>não mede concordância</strong></td>
-      </tr>
-      <tr>
-        <td>Concordância de Lin (ρc)</td>
-        <td class="n">{{ c.lin.ccc|floatformat:4|default:"—" }}</td>
-        <td class="referencia">
-          {{ c.lin.classificacao }} · precisão {{ c.lin.componente_precisao|floatformat:4|default:"—" }} ×
-          acurácia {{ c.lin.componente_acuracia|floatformat:4|default:"—" }}
-        </td>
-      </tr>
-      <tr>
-        <td>Viés médio (Bland-Altman)</td>
-        <td class="n">{{ c.bland_altman.vies|floatformat:4|default:"—" }}</td>
-        <td class="referencia">limites de concordância: {{ c.bland_altman.limite_inferior|floatformat:4|default:"—" }} a {{ c.bland_altman.limite_superior|floatformat:4|default:"—" }}</td>
-      </tr>
-    </table>
+          {% if graficos.regressao %}<div class="grafico">{{ graficos.regressao|safe }}</div>{% endif %}
+          {% if graficos.bland_altman %}<div class="grafico">{{ graficos.bland_altman|safe }}</div>{% endif %}
 
-    <p class="nota">
-      O coeficiente r e o ρc de Lin respondem perguntas diferentes: r diz se os pontos
-      formam <em>uma</em> reta; ρc diz se formam <em>a</em> reta de identidade. Dois métodos
-      podem ter r = 1,000 com um lendo 30% acima do outro.
-    </p>
+          {% if c.analitica.discordantes %}
+          <h3 style="font-size: 13px; margin: 20px 0 8px">Amostras fora do erro total permitido</h3>
+          <table>
+            <tr><th>Amostra</th><th class="n">Comparação</th><th class="n">Teste</th><th class="n">Erro</th><th class="n">Limite</th></tr>
+            {% for d in c.analitica.discordantes %}
+            <tr>
+              <td>{{ d.identificacao }}</td>
+              <td class="n">{{ d.valor_comparacao|floatformat:4 }}</td>
+              <td class="n">{{ d.valor_teste|floatformat:4 }}</td>
+              <td class="n" style="color: var(--reprovado)">{{ d.erro_pct|floatformat:2 }}%</td>
+              <td class="n">{{ d.limite_pct|floatformat:2 }}%</td>
+            </tr>
+            {% endfor %}
+          </table>
+          {% endif %}
 
-    {% if graficos.regressao %}<div class="grafico">{{ graficos.regressao|safe }}</div>{% endif %}
-    {% if graficos.bland_altman %}<div class="grafico">{{ graficos.bland_altman|safe }}</div>{% endif %}
+          {% if c.clinica.reclassificacoes %}
+          <h3 style="font-size: 13px; margin: 20px 0 8px">Amostras que mudariam de interpretação</h3>
+          <table>
+            <tr><th>Amostra</th><th class="n">Comparação</th><th>Interpretação</th><th class="n">Teste</th><th>Interpretação</th></tr>
+            {% for r in c.clinica.reclassificacoes %}
+            <tr>
+              <td>{{ r.identificacao }}</td>
+              <td class="n">{{ r.valor_comparacao|floatformat:4 }}</td>
+              <td>{{ r.classificacao_comparacao }}</td>
+              <td class="n">{{ r.valor_teste|floatformat:4 }}</td>
+              <td style="color: var(--reprovado)">{{ r.classificacao_teste }}</td>
+            </tr>
+            {% endfor %}
+          </table>
+          <p class="nota" style="margin-top: 8px">Cada linha é um paciente que seria considerado normal por um método e alterado pelo outro.</p>
+          {% endif %}
+          {% endwith %}
+        {% else %}
+          <p class="vazio">{{ comparabilidade.motivo|capfirst }}.</p>
+        {% endif %}
+      </div>
+    </details>
 
-    <h3>Grau de concordância</h3>
-    <table>
-      <tr><th>Tipo</th><th class="n">Concordância</th><th>Detalhe</th></tr>
-      <tr>
-        <td>Analítica (erro total permitido)</td>
-        <td class="n">{{ c.analitica.concordancia_pct|floatformat:1|default:"—" }}%</td>
-        <td class="referencia">{{ c.analitica.dentro_do_limite }} de {{ c.analitica.avaliadas }} amostras dentro do limite</td>
-      </tr>
-      <tr>
-        <td>Clínica (intervalo de referência)</td>
-        <td class="n">{{ c.clinica.concordancia_pct|floatformat:1|default:"—" }}%</td>
-        <td class="referencia">
-          {% if c.clinica.observacao %}{{ c.clinica.observacao|capfirst }}{% else %}{{ c.clinica.concordantes }} de {{ c.clinica.n }} amostras com a mesma interpretação{% endif %}
-        </td>
-      </tr>
-    </table>
-
-    {% if c.analitica.discordantes %}
-    <h3>Amostras fora do erro total permitido</h3>
-    <table>
-      <tr><th>Amostra</th><th class="n">Comparação</th><th class="n">Teste</th><th class="n">Erro</th><th class="n">Limite</th></tr>
-      {% for d in c.analitica.discordantes %}
-      <tr>
-        <td>{{ d.identificacao }}</td>
-        <td class="n">{{ d.valor_comparacao|floatformat:4 }}</td>
-        <td class="n">{{ d.valor_teste|floatformat:4 }}</td>
-        <td class="n estado--REPROVADO">{{ d.erro_pct|floatformat:2 }}%</td>
-        <td class="n">{{ d.limite_pct|floatformat:2 }}%</td>
-      </tr>
-      {% endfor %}
-    </table>
-    {% endif %}
-
-    {% if c.clinica.reclassificacoes %}
-    <h3>Amostras que mudariam de interpretação</h3>
-    <table>
-      <tr><th>Amostra</th><th class="n">Comparação</th><th>Interpretação</th><th class="n">Teste</th><th>Interpretação</th></tr>
-      {% for r in c.clinica.reclassificacoes %}
-      <tr>
-        <td>{{ r.identificacao }}</td>
-        <td class="n">{{ r.valor_comparacao|floatformat:4 }}</td>
-        <td>{{ r.classificacao_comparacao }}</td>
-        <td class="n">{{ r.valor_teste|floatformat:4 }}</td>
-        <td class="estado--REPROVADO">{{ r.classificacao_teste }}</td>
-      </tr>
-      {% endfor %}
-    </table>
-    <p class="nota">Cada linha é um paciente que seria considerado normal por um método e alterado pelo outro.</p>
-    {% endif %}
-    {% endwith %}
-  {% else %}
-    <p class="vazio">{{ comparabilidade.motivo|capfirst }}.</p>
-  {% endif %}
-</section>
-
-<section>
-  <h2>Veredito por nível</h2>
-  {% for avaliacao in veredito.niveis %}
-    <h3>
-      Nível {{ avaliacao.nivel }} — concentração {{ avaliacao.concentracao|floatformat:3|default:"—" }}
-      <span class="estado estado--{{ avaliacao.status }}">{{ avaliacao.status }}</span>
-    </h3>
-    <table>
-      <tr><th>Indicador</th><th class="n">Observado</th><th class="n">Limite</th><th>Critério</th><th>Situação</th></tr>
-      {% for indicador in avaliacao.indicadores %}
-      <tr>
-        <td>{{ indicador.indicador|capfirst }}</td>
-        <td class="n">{{ indicador.observado_pct|floatformat:2|default:"—" }}{% if indicador.observado_pct != None %}%{% endif %}</td>
-        <td class="n">{{ indicador.limite_pct|floatformat:2|default:"—" }}{% if indicador.limite_pct != None %}%{% endif %}</td>
-        <td class="referencia">{{ indicador.tipo_limite }} — {{ indicador.referencia|default:"sem referência declarada" }}</td>
-        <td class="estado estado--{{ indicador.status }}">
-          {{ indicador.status }}{% if indicador.motivo %}<br><span class="referencia">{{ indicador.motivo }}</span>{% endif %}
-        </td>
-      </tr>
-      {% endfor %}
-    </table>
-    <p class="nota">
-      Métrica Sigma: <strong>{{ avaliacao.sigma|floatformat:1|default:"—" }}</strong> — {{ avaliacao.classificacao_sigma }}
-      {% if avaliacao.nao_contratados %}<br>Não avaliado neste módulo: {{ avaliacao.nao_contratados|join:", " }}.{% endif %}
-    </p>
-  {% empty %}
-    <p class="vazio">Nenhum nível avaliado.</p>
-  {% endfor %}
-</section>
+    <!-- 6. Veredito -->
+    <details class="cartao faixa" open>
+      <summary>
+        <span class="marcador {% if veredito.status == 'APROVADO' %}marcador--pronto{% elif veredito.status == 'REPROVADO' %}marcador--corrente{% else %}marcador--espera{% endif %}">6</span>
+        <span class="titulo-faixa">Veredito por nível</span>
+        <span class="resumo">Cada indicador contra o seu limite, com o critério</span>
+        <span class="estado estado--{{ veredito.status }}" style="border: none; padding: 0">{{ veredito.status }}</span>
+        <svg class="seta" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--tinta-3)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>
+      </summary>
+      <div class="corpo">
+        {% for avaliacao in veredito.niveis %}
+        <div class="nivel">
+          <h3 style="font-size: 13px; margin: 0 0 8px">
+            Nível {{ avaliacao.nivel }} — concentração {{ avaliacao.concentracao|floatformat:3|default:"—" }}
+            <span class="estado estado--{{ avaliacao.status }}">{{ avaliacao.status }}</span>
+          </h3>
+          <table>
+            <tr><th>Indicador</th><th class="n">Observado</th><th class="n">Limite</th><th>Critério</th><th>Situação</th></tr>
+            {% for indicador in avaliacao.indicadores %}
+            <tr>
+              <td>{{ indicador.indicador|capfirst }}</td>
+              <td class="n">{{ indicador.observado_pct|floatformat:2|default:"—" }}{% if indicador.observado_pct != None %}%{% endif %}</td>
+              <td class="n">{{ indicador.limite_pct|floatformat:2|default:"—" }}{% if indicador.limite_pct != None %}%{% endif %}</td>
+              <td class="nota">{{ indicador.tipo_limite }} — {{ indicador.referencia|default:"sem referência declarada" }}</td>
+              <td><span class="estado estado--{{ indicador.status }}" style="border: none; padding: 0">{{ indicador.status }}</span>{% if indicador.motivo %}<br><span class="nota">{{ indicador.motivo }}</span>{% endif %}</td>
+            </tr>
+            {% endfor %}
+          </table>
+          <p class="nota" style="margin-top: 6px">
+            Métrica Sigma: <strong>{{ avaliacao.sigma|floatformat:1|default:"—" }}</strong> — {{ avaliacao.classificacao_sigma }}
+            {% if avaliacao.nao_contratados %}<br>Não avaliado neste módulo: {{ avaliacao.nao_contratados|join:", " }}.{% endif %}
+          </p>
+        </div>
+        {% empty %}
+        <p class="vazio">Nenhum nível avaliado.</p>
+        {% endfor %}
+      </div>
+    </details>
 {% endif %}
 
-<section>
-  <h2>Sobre este resultado</h2>
-  <p class="nota">
-    Cálculo executado pelo motor de validação a partir dos dados brutos registrados.
-    Este documento reflete o estado atual do estudo; ele só se torna registro de
-    qualidade após a conclusão e a liberação pelo responsável técnico, quando o
-    resultado é congelado junto da versão do motor que o produziu.
-  </p>
-  <p class="nota">
-    Procedimentos estatísticos conforme descritos em CLSI EP15 (precisão), EP09
-    (comparabilidade) e EP12 (qualitativo). O sistema não é certificado nem
-    endossado pelo CLSI; a responsabilidade pela validação permanece do
-    laboratório e de seu responsável técnico.
-  </p>
-</section>
+    <section class="cartao" style="padding: 15px 18px">
+      <p class="nota" style="margin: 0 0 8px">
+        Cálculo executado a partir dos dados brutos registrados. Este documento reflete o estado
+        atual do estudo; ele só se torna registro de qualidade após a liberação pelo responsável
+        técnico, quando o resultado é congelado junto da versão do motor que o produziu.
+      </p>
+      <p class="nota" style="margin: 0">
+        Procedimentos conforme descritos em CLSI EP15, EP09 e EP12. O sistema não é certificado nem
+        endossado pelo CLSI; a responsabilidade pela validação permanece do laboratório e de seu
+        responsável técnico.
+      </p>
+    </section>
+  </div>
 
-</main>
-</body>
-</html>
+  <!-- Painel lateral -->
+  <aside class="lateral">
+{% if tipo == "quantitativo" %}
+    <section class="cartao" style="padding: 15px 16px">
+      <div style="display: flex; align-items: center; gap: 7px; margin-bottom: 13px">
+        <span class="ponto" style="width: 6px; height: 6px; border-radius: 50%; background: var(--aprovado)"></span>
+        <span style="font-size: 12px; font-weight: 600; color: var(--tinta-2)">Precisão ao vivo</span>
+      </div>
+      {% for item in precisao %}
+      <div class="medidor">
+        <div class="linha">
+          <span style="font-size: 11.5px; color: var(--tinta-3)">Nível {{ item.numero }}</span>
+          <span class="cresce"></span>
+          <span class="valor">{{ item.estatistica.cv_aplicavel|floatformat:2|default:"—" }}{% if item.estatistica.cv_aplicavel %}%{% endif %}</span>
+          {% for indicador in item.avaliacao.indicadores %}{% if indicador.indicador == "imprecisão" %}
+            <span class="num" style="font-size: 11px; color: var(--tinta-3)">/ {{ indicador.limite_pct|floatformat:2|default:"—" }}%</span>
+          {% endif %}{% endfor %}
+        </div>
+        <div class="trilha {% if item.avaliacao.status == 'APROVADO' %}trilha--completa{% endif %}">
+          <span style="width: {{ item.medidor_pct }}%"></span>
+        </div>
+      </div>
+      {% empty %}
+      <p class="vazio" style="font-size: 12.5px">Sem níveis cadastrados.</p>
+      {% endfor %}
+      <p class="nota" style="margin: 14px 0 0; padding-top: 12px; border-top: 1px solid var(--grade)">
+        Os valores são a <strong style="color: var(--tinta-2)">precisão intermediária</strong>, que
+        inclui a variação entre os dias. É ela que entra no erro total.
+      </p>
+    </section>
+{% endif %}
+
+    <section class="cartao" style="padding: 15px 16px">
+      <div style="font-size: 12px; font-weight: 600; color: var(--tinta-2); margin-bottom: 12px">O que falta</div>
+      <ul class="lista-falta">
+        {% if andamento.precisao_total %}
+        <li>
+          {% if andamento.precisao_pct == 100 %}
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--aprovado)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0"><path d="m5 13 4.5 4.5L19 7"/></svg>
+            <span style="color: var(--tinta-3); text-decoration: line-through">Precisão &mdash; {{ andamento.precisao_total }} réplicas</span>
+          {% else %}
+            <span class="anel anel--agora"></span>
+            <span style="font-weight: 600">Precisão &mdash; faltam {{ andamento.precisao_faltam }} réplicas</span>
+            <span class="selo selo--acento">agora</span>
+          {% endif %}
+        </li>
+        {% endif %}
+        {% if andamento.comparacao_total %}
+        <li>
+          {% if andamento.comparacao_pct == 100 %}
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--aprovado)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0"><path d="m5 13 4.5 4.5L19 7"/></svg>
+            <span style="color: var(--tinta-3); text-decoration: line-through">Comparabilidade &mdash; {{ andamento.comparacao_total }} amostras</span>
+          {% else %}
+            <span class="anel"></span>
+            <span style="color: var(--tinta-2)">Comparabilidade &mdash; {{ andamento.comparacao_feita }} de {{ andamento.comparacao_total }}</span>
+          {% endif %}
+        </li>
+        {% endif %}
+      </ul>
+      <p class="nota" style="margin: 13px 0 0">Próxima ação: <strong style="color: var(--tinta-2)">{{ proxima_acao }}</strong></p>
+    </section>
+
+    <section class="cartao" style="padding: 15px 16px">
+      <div style="font-size: 12px; font-weight: 600; color: var(--tinta-2); margin-bottom: 11px">Atalhos</div>
+      <ul style="display: flex; flex-direction: column; gap: 9px; font-size: 12.5px">
+        <li><a href="/admin/estudos/nivelestudo/?estudo__id__exact={{ estudo.pk }}">Lançar réplicas de controle</a></li>
+        <li><a href="/admin/estudos/estudo/{{ estudo.pk }}/change/">Lançar amostras pareadas</a></li>
+        <li><a href="/admin/catalogo/especificacaoqualidade/{{ estudo.especificacao.pk }}/change/">Revisar a ficha do analito</a></li>
+      </ul>
+    </section>
+  </aside>
+</div>
+{% endblock %}

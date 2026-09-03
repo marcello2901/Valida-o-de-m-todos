@@ -10,7 +10,9 @@ conferir se o modelo de dados representa mesmo a planilha.
 Uso:  python manage.py dados_exemplo
 """
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+
+from django.utils import timezone
 from decimal import Decimal
 
 from django.conf import settings
@@ -27,7 +29,8 @@ from catalogo.models import (
     SistemaAnalitico,
 )
 from contas.models import Assinatura, Laboratorio, Usuario
-from estudos.models import AmostraComparacao, Estudo, NivelEstudo, Replica
+from estudos.models import AmostraComparacao, Estudo, NivelEstudo, Replica, Veredito
+from estudos import servicos
 from motor import precisao
 
 SENHA_DEMONSTRACAO = "demonstracao-2026"
@@ -54,6 +57,7 @@ class Command(BaseCommand):
             especificacao = self._especificacao(laboratorio, mensurando)
             estudo = self._estudo(laboratorio, usuario, mensurando, teste, comparacao, especificacao)
             self._dados_brutos(estudo, teste)
+            self._outras_colunas(laboratorio, usuario, teste, comparacao)
 
         self.stdout.write(self.style.SUCCESS("\nDados de exemplo criados.\n"))
         self.stdout.write(f"  Laboratório: {laboratorio}")
@@ -174,28 +178,29 @@ class Command(BaseCommand):
             )
 
     def _especificacao(self, laboratorio, mensurando) -> EspecificacaoQualidade:
-        referencia = "Limite de aceitabilidade do provedor de ensaio de proficiência ControlLab"
+        """Cria a ficha declarando a FONTE — os limites derivados vêm dela.
 
+        É a demonstração da ideia central: o laboratório informa o erro total e
+        de onde ele veio; bias, imprecisão e as três justificativas nascem daí.
+        """
         especificacao, criada = EspecificacaoQualidade.objects.get_or_create(
             laboratorio=laboratorio,
             mensurando=mensurando,
             nome="FT4 — ControlLab 2026",
             defaults={
                 "erro_total_maximo_pct": Decimal("12.00"),
-                "erro_total_referencia": referencia,
-                "bias_maximo_pct": Decimal("6.00"),
-                "bias_referencia": f"50% do {referencia[0].lower()}{referencia[1:]}",
+                "fonte": EspecificacaoQualidade.PROFICIENCIA,
+                "fonte_descricao": "provedor de ensaio de proficiência ControlLab",
                 "nivel_significancia": Decimal("0.050"),
             },
         )
         if criada:
             for nivel in (1, 2, 3):
                 LimiteImprecisao.objects.create(
-                    especificacao=especificacao,
-                    nivel=nivel,
-                    maximo_pct=Decimal("4.00"),
-                    referencia=f"1/3 do {referencia[0].lower()}{referencia[1:]}",
+                    especificacao=especificacao, nivel=nivel,
+                    maximo_pct=Decimal("0.00"), referencia="",
                 )
+            especificacao.sincronizar_imprecisao()
         return especificacao
 
     def _estudo(self, laboratorio, usuario, mensurando, teste, comparacao, especificacao) -> Estudo:
@@ -288,3 +293,158 @@ class Command(BaseCommand):
                     valor_comparacao=Decimal(str(round(valor, 4))),
                     valor_teste=Decimal(str(round(valor * 1.06 + 0.02 + desvio, 4))),
                 )
+
+    def _outras_colunas(self, laboratorio, usuario, teste, comparacao):
+        """Mais três validações, uma por coluna do quadro.
+
+        Com um estudo só o quadro não demonstra nada. Estas três mostram o
+        caminho inteiro: rascunho sem dado, coleta em andamento e um estudo já
+        liberado — inclusive uma ficha com pendência, que a biblioteca sinaliza.
+        """
+        # 1. Rascunho — ficha incompleta de propósito: falta a imprecisão.
+        ferritina, _ = Mensurando.objects.get_or_create(
+            laboratorio=laboratorio, nome="Ferritina", material_biologico="soro",
+            defaults={"unidade_medida": "ng/mL"},
+        )
+        ficha_ferritina, _ = EspecificacaoQualidade.objects.get_or_create(
+            laboratorio=laboratorio, mensurando=ferritina, nome="Ferritina — ControlLab 2026",
+            defaults={
+                "erro_total_maximo_pct": Decimal("20.00"),
+                "fonte": EspecificacaoQualidade.PROFICIENCIA,
+                "fonte_descricao": "provedor de ensaio de proficiência ControlLab",
+            },
+        )
+        Estudo.objects.get_or_create(
+            laboratorio=laboratorio, identificacao="Validação Ferritina — a definir",
+            defaults={
+                "modulo": Assinatura.COMPLETO, "mensurando": ferritina,
+                "sistema_teste": teste, "sistema_comparacao": comparacao,
+                "especificacao": ficha_ferritina, "criado_por": usuario,
+            },
+        )
+
+        # 2. Coletando dados — corrida única, metade das réplicas lançadas.
+        hba1c, _ = Mensurando.objects.get_or_create(
+            laboratorio=laboratorio, nome="HbA1c", material_biologico="sangue total",
+            defaults={"unidade_medida": "%"},
+        )
+        ficha_hba1c, criada = EspecificacaoQualidade.objects.get_or_create(
+            laboratorio=laboratorio, mensurando=hba1c, nome="HbA1c — estado da arte",
+            defaults={
+                "erro_total_maximo_pct": Decimal("6.00"),
+                "fonte": EspecificacaoQualidade.ESTADO_DA_ARTE,
+                "fonte_descricao": "desempenho do grupo de pares no método",
+            },
+        )
+        if criada:
+            LimiteImprecisao.objects.create(
+                especificacao=ficha_hba1c, nivel=1, maximo_pct=Decimal("0.00"), referencia=""
+            )
+            ficha_hba1c.sincronizar_imprecisao()
+
+        controle_hba1c, _ = Controle.objects.get_or_create(
+            sistema=teste, nivel=1, lote="A1C-2026B",
+            defaults={"nome": "Controle HbA1c Nível 1", "validade": date(2027, 6, 30),
+                      "valor_alvo": Decimal("5.6000")},
+        )
+        em_coleta, criado = Estudo.objects.get_or_create(
+            laboratorio=laboratorio, identificacao="Validação HbA1c — Atellica IH00715",
+            defaults={
+                "modulo": Assinatura.PRECISAO, "mensurando": hba1c,
+                "desenho_precisao": precisao.DESENHO_CORRIDA_UNICA,
+                "sistema_teste": teste, "especificacao": ficha_hba1c, "criado_por": usuario,
+            },
+        )
+        if criado:
+            nivel = NivelEstudo.objects.create(
+                estudo=em_coleta, numero=1, controle=controle_hba1c,
+                concentracao_declarada=Decimal("5.6000"),
+            )
+            for sequencia, valor in enumerate(
+                ["5.58", "5.62", "5.59", "5.61", "5.57", "5.63"], start=1
+            ):
+                Replica.objects.create(nivel=nivel, corrida=1, sequencia=sequencia, valor=Decimal(valor))
+
+        # 3. Liberado — veredito congelado, como fica depois da assinatura.
+        glicose, _ = Mensurando.objects.get_or_create(
+            laboratorio=laboratorio, nome="Glicose", material_biologico="plasma",
+            defaults={"unidade_medida": "mg/dL"},
+        )
+        ficha_glicose, criada = EspecificacaoQualidade.objects.get_or_create(
+            laboratorio=laboratorio, mensurando=glicose, nome="Glicose — ControlLab 2026",
+            defaults={
+                "erro_total_maximo_pct": Decimal("8.00"),
+                "fonte": EspecificacaoQualidade.PROFICIENCIA,
+                "fonte_descricao": "provedor de ensaio de proficiência ControlLab",
+            },
+        )
+        if criada:
+            LimiteImprecisao.objects.create(
+                especificacao=ficha_glicose, nivel=1, maximo_pct=Decimal("0.00"), referencia=""
+            )
+            ficha_glicose.sincronizar_imprecisao()
+
+        controle_glicose, _ = Controle.objects.get_or_create(
+            sistema=teste, nivel=1, lote="GLI-2025C",
+            defaults={"nome": "Controle Química Nível 1", "validade": date(2026, 12, 31),
+                      "valor_alvo": Decimal("95.0000")},
+        )
+
+        liberado, criado = Estudo.objects.get_or_create(
+            laboratorio=laboratorio, identificacao="Validação Glicose — Atellica IH00715 — 2025",
+            defaults={
+                "modulo": Assinatura.COMPLETO, "mensurando": glicose,
+                "sistema_teste": teste, "sistema_comparacao": comparacao,
+                "especificacao": ficha_glicose, "criado_por": usuario,
+                "situacao": Estudo.LIBERADO,
+                "data_inicio": date(2025, 11, 3),
+                "data_conclusao": date(2025, 11, 21),
+            },
+        )
+        if criado:
+            # Estudo completo de verdade, não uma casca: é dele que sai o retrato
+            # congelado. Um veredito de demonstração com detalhamento vazio faria
+            # a tela mostrar campo em branco onde deveria haver número assinado.
+            nivel = NivelEstudo.objects.create(
+                estudo=liberado, numero=1, controle=controle_glicose,
+                concentracao_declarada=Decimal("95.0000"),
+            )
+            corridas = [
+                ["94.2", "95.1", "94.7", "95.4", "94.6"],
+                ["95.0", "95.9", "95.5", "96.2", "95.4"],
+                ["94.6", "95.5", "95.1", "95.8", "95.0"],
+                ["95.3", "96.2", "95.8", "96.5", "95.7"],
+                ["94.9", "95.8", "95.4", "96.1", "95.3"],
+            ]
+            for numero_corrida, valores in enumerate(corridas, start=1):
+                for sequencia, valor in enumerate(valores, start=1):
+                    Replica.objects.create(
+                        nivel=nivel, corrida=numero_corrida,
+                        sequencia=sequencia, valor=Decimal(valor),
+                    )
+
+            # 40 amostras pareadas: o mínimo do CLSI EP09, cobrindo do
+            # hipoglicêmico ao diabético descompensado. O método novo lê 1%
+            # acima do antigo mais 0,5 mg/dL — um viés pequeno e constante.
+            for indice in range(40):
+                referencia = Decimal("58") + Decimal("7.4") * indice
+                desvio = Decimal("0.6") if indice % 3 == 0 else Decimal("-0.4")
+                AmostraComparacao.objects.create(
+                    estudo=liberado, identificacao=f"GLI-{indice + 1:03d}",
+                    valor_comparacao=referencia,
+                    valor_teste=(referencia * Decimal("1.01") + Decimal("0.5") + desvio).quantize(
+                        Decimal("0.01")
+                    ),
+                )
+
+            resultado = servicos.retrato(liberado)
+            Veredito.objects.create(
+                estudo=liberado, resultado=resultado["veredito"]["status"],
+                detalhamento=resultado,
+                liberado_por=usuario,
+                # A liberação acompanha a conclusão do estudo. Com timezone.now()
+                # a demonstração mostrava um estudo concluído em 2025 e liberado
+                # no ano seguinte — incoerência que salta aos olhos no card.
+                liberado_em=timezone.make_aware(datetime(2025, 11, 21, 15, 40)),
+            )
+

@@ -128,9 +128,117 @@ class Estudo(models.Model):
             return precisao.MINIMO_REPLICAS_CORRIDA_UNICA
         return precisao.MINIMO_CORRIDAS * precisao.MINIMO_REPLICAS_POR_CORRIDA
 
+    _MODULO_CURTO = {
+        Assinatura.PRECISAO: "Precisão",
+        Assinatura.COMPARABILIDADE: "Comparabilidade",
+        Assinatura.COMPLETO: "Completo",
+    }
+
+    def modulo_curto(self) -> str:
+        """Nome do módulo em uma palavra, para etiquetas e cabeçalhos."""
+        return self._MODULO_CURTO.get(self.modulo, self.modulo)
+
+    def desenho_curto(self) -> str:
+        """Desenho do estudo em forma de etiqueta."""
+        if self.desenho_precisao == precisao.DESENHO_CORRIDA_UNICA:
+            return f"Corrida única · {precisao.MINIMO_REPLICAS_CORRIDA_UNICA} réplicas"
+        return f"{precisao.MINIMO_CORRIDAS} × {precisao.MINIMO_REPLICAS_POR_CORRIDA}"
+
     def editavel(self) -> bool:
         """Estudo liberado é registro de qualidade: não se edita, cancela-se."""
         return self.situacao == self.RASCUNHO
+
+    # --- Progresso, para o quadro e para o cabeçalho do estudo ---------------
+    #
+    # O quadro não mostra formulário: mostra o quanto falta e qual é a próxima
+    # ação. Estes métodos são a fonte desses dois números.
+
+    def replicas_esperadas(self) -> int:
+        return self.niveis.count() * self.minimo_replicas_por_nivel()
+
+    def replicas_lancadas(self) -> int:
+        return Replica.objects.filter(nivel__estudo=self, excluida=False).count()
+
+    def amostras_lancadas(self) -> int:
+        return self.amostras_comparacao.filter(excluida=False).count()
+
+    def progresso(self) -> dict:
+        """Quanto de cada estudo já foi digitado, em número e em percentual."""
+        from motor.comparabilidade import MINIMO_AMOSTRAS_EP09
+
+        precisao_feita = self.replicas_lancadas() if self.avalia_precisao() else 0
+        precisao_total = self.replicas_esperadas() if self.avalia_precisao() else 0
+        comparacao_feita = self.amostras_lancadas() if self.avalia_comparabilidade() else 0
+        comparacao_total = MINIMO_AMOSTRAS_EP09 if self.avalia_comparabilidade() else 0
+
+        def percentual(feito, total):
+            return min(100, round(feito / total * 100)) if total else 0
+
+        return {
+            "precisao_feita": precisao_feita,
+            "precisao_total": precisao_total,
+            "precisao_pct": percentual(precisao_feita, precisao_total),
+            "comparacao_feita": comparacao_feita,
+            "comparacao_total": comparacao_total,
+            "comparacao_pct": percentual(comparacao_feita, comparacao_total),
+            "precisao_faltam": max(0, precisao_total - precisao_feita),
+            "comparacao_faltam": max(0, comparacao_total - comparacao_feita),
+            "completo": (
+                (not precisao_total or precisao_feita >= precisao_total)
+                and (not comparacao_total or comparacao_feita >= comparacao_total)
+                and (precisao_total or comparacao_total)
+            ),
+            "iniciado": bool(precisao_feita or comparacao_feita),
+        }
+
+    def proxima_acao(self) -> str:
+        """A frase que o card do quadro mostra no lugar de um formulário."""
+        if self.situacao == self.LIBERADO:
+            return "Liberado pelo responsável técnico"
+        if self.situacao == self.CANCELADO:
+            return "Estudo cancelado"
+        if self.situacao == self.CONCLUIDO:
+            return "Aguarda liberação técnica"
+
+        if not self.niveis.exists() and not self.amostras_comparacao.exists():
+            return "Sem dados lançados"
+
+        andamento = self.progresso()
+        if andamento["completo"]:
+            return "Calcular agora"
+
+        if andamento["precisao_total"] and andamento["precisao_feita"] < andamento["precisao_total"]:
+            for nivel in self.niveis.all():
+                feitas = nivel.replicas.filter(excluida=False).count()
+                if feitas < self.minimo_replicas_por_nivel():
+                    return f"Nível {nivel.numero}, réplica {feitas + 1}"
+
+        faltam = andamento["comparacao_total"] - andamento["comparacao_feita"]
+        if faltam > 0:
+            return f"Faltam {faltam} amostras"
+        return "Continuar de onde parou"
+
+    COLUNA_RASCUNHO = "rascunho"
+    COLUNA_COLETANDO = "coletando"
+    COLUNA_PRONTO = "pronto"
+    COLUNA_CALCULADO = "calculado"
+    COLUNA_LIBERADO = "liberado"
+
+    def coluna_quadro(self) -> str:
+        """Em qual coluna do quadro este estudo aparece."""
+        if self.situacao == self.LIBERADO:
+            return self.COLUNA_LIBERADO
+        if self.situacao == self.CONCLUIDO:
+            return self.COLUNA_CALCULADO
+        if self.situacao == self.CANCELADO:
+            return ""
+
+        andamento = self.progresso()
+        if andamento["completo"]:
+            return self.COLUNA_PRONTO
+        if andamento["iniciado"]:
+            return self.COLUNA_COLETANDO
+        return self.COLUNA_RASCUNHO
 
 
 class NivelEstudo(models.Model):
@@ -293,3 +401,21 @@ class Veredito(models.Model):
 
     def liberado(self) -> bool:
         return self.liberado_em is not None
+
+    def maior_erro_total(self):
+        """Maior erro total observado entre os níveis, lido do retrato congelado.
+
+        Lê o snapshot, nunca recalcula: um número mostrado ao lado de um veredito
+        assinado tem de ser o número que foi assinado. Devolve ``None`` quando o
+        retrato não traz o indicador — é o caso do módulo de precisão ou de
+        comparabilidade isolados, que por construção não computam erro total.
+        Quem exibe deve omitir o campo nesse caso, e não desenhar um traço: um
+        traço ao lado de "Aprovado" faz o leitor achar que o dado se perdeu.
+        """
+        observados = [
+            indicador.get("observado_pct")
+            for nivel in self.detalhamento.get("precisao", [])
+            for indicador in nivel.get("avaliacao", {}).get("indicadores", [])
+            if indicador.get("indicador") == "erro total" and indicador.get("observado_pct") is not None
+        ]
+        return max(observados) if observados else None

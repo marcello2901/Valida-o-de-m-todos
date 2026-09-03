@@ -1,0 +1,152 @@
+{% load static %}<!doctype html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block titulo %}Validação de métodos{% endblock %}</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@500;600;700&display=swap">
+<style>
+  /* Tokens do sistema visual. Um lugar só: mudar aqui muda todas as telas. */
+  :root {
+    --superficie: #fcfcfb;   /* cards e barras */
+    --plano: #f9f9f7;        /* fundo da página */
+    --leito: #f4f3f0;        /* colunas do quadro, ladrilhos */
+    --faixa: #f6f5f2;        /* faixas informativas */
+    --trilho: #e9e8e3;       /* trilho de barra de progresso */
+    --chip: #efeee9;         /* etiquetas neutras */
+    --tinta: #0b0b0b;
+    --tinta-2: #52514e;
+    --tinta-3: #898781;
+    --grade: #eeede8;        /* divisórias internas */
+    --linha: #e1e0d9;        /* bordas de card */
+    --borda: #c3c2b7;        /* borda em destaque */
+    --acento: #2a78d6;
+    --acento-fundo: #eef4fc;
+    --acento-linha: #d8e6f8;
+    --aprovado: #0ca30c;
+    --aprovado-fundo: #e7f6e7;
+    --reprovado: #d03b3b;
+    --atencao: #fab219;
+    --atencao-tinta: #8a6100;
+    --atencao-fundo: #fdf4e0;
+    --raio: 11px;
+    --raio-menor: 8px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--plano); color: var(--tinta);
+    font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  a { color: var(--acento); text-decoration: none; }
+  a:hover { color: #1f5da8; }
+
+  /* A Instrument Sans só toca títulos e números. O corpo continua no system-ui
+     do sistema operacional — é o que o programa já usava. */
+  .display { font-family: "Instrument Sans", system-ui, sans-serif; letter-spacing: -0.011em; }
+  .num { font-variant-numeric: tabular-nums; }
+
+  .aplicacao { display: flex; min-height: 100vh; }
+
+  /* Trilho de navegação */
+  .trilho {
+    width: 64px; flex-shrink: 0; background: var(--superficie);
+    border-right: 1px solid var(--linha); display: flex; flex-direction: column;
+    align-items: center; padding: 14px 0; gap: 4px; position: sticky; top: 0; height: 100vh;
+  }
+  .marca {
+    width: 34px; height: 34px; border-radius: 9px; background: var(--tinta);
+    color: var(--superficie); display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 15px; margin-bottom: 14px;
+  }
+  .trilho a {
+    width: 44px; height: 44px; border-radius: 10px; color: var(--tinta-3);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .trilho a:hover { background: var(--leito); color: var(--tinta-2); }
+  .trilho a.ativo { background: var(--acento-fundo); color: var(--acento); }
+
+  .conteudo { flex-grow: 1; min-width: 0; display: flex; flex-direction: column; }
+
+  .barra {
+    background: var(--superficie); border-bottom: 1px solid var(--linha);
+    padding: 12px 24px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  }
+  .barra h1 { font-size: 19px; font-weight: 600; margin: 0; line-height: 1.25; }
+  .barra .sub { font-size: 12.5px; color: var(--tinta-3); margin: 2px 0 0; }
+  .cresce { flex-grow: 1; }
+
+  .botao {
+    display: inline-flex; align-items: center; gap: 7px; height: 34px; padding: 0 14px;
+    border-radius: var(--raio-menor); border: 1px solid var(--linha);
+    background: var(--superficie); color: var(--tinta-2);
+    font-size: 13px; font-weight: 600; cursor: pointer;
+  }
+  .botao:hover { border-color: var(--borda); color: var(--tinta); }
+  .botao--primario { background: var(--acento); border-color: var(--acento); color: var(--superficie); }
+  .botao--primario:hover { background: #1f5da8; border-color: #1f5da8; color: var(--superficie); }
+
+  .cartao {
+    background: var(--superficie); border: 1px solid var(--linha);
+    border-radius: var(--raio); box-shadow: 0 1px 2px rgba(11,11,11,.035);
+  }
+  .selo { font-size: 10.5px; font-weight: 600; border-radius: 5px; padding: 3px 7px; white-space: nowrap; }
+  .selo--neutro { color: var(--tinta-2); background: var(--chip); }
+  .selo--acento { color: var(--acento); background: var(--acento-fundo); }
+  .selo--atencao { color: var(--atencao-tinta); background: var(--atencao-fundo); }
+
+  /* Estado nunca é só cor: o texto do estado acompanha sempre. */
+  .estado {
+    display: inline-flex; align-items: center; gap: 4px; font-size: 10.5px; font-weight: 700;
+    border: 1.5px solid currentColor; border-radius: 20px; padding: 2px 8px; white-space: nowrap;
+  }
+  .estado--APROVADO { color: var(--aprovado); }
+  .estado--REPROVADO { color: var(--reprovado); }
+  .estado--INDETERMINADO { color: var(--atencao-tinta); }
+
+  .trilha { height: 4px; border-radius: 3px; background: var(--trilho); overflow: hidden; }
+  .trilha > span { display: block; height: 100%; background: var(--acento); }
+  .trilha--completa > span { background: var(--aprovado); }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--grade); vertical-align: top; }
+  th { font-weight: 600; color: var(--tinta-2); font-size: 12px; }
+  td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+
+  .aviso, .falta {
+    padding: 11px 14px; margin-bottom: 10px; font-size: 13px; border-radius: 0 4px 4px 0;
+  }
+  .aviso { border-left: 3px solid var(--atencao); background: #fffbf0; }
+  .falta { border-left: 3px solid var(--reprovado); background: #fdf3f3; }
+  .vazio { color: var(--tinta-3); font-style: italic; }
+  .nota { font-size: 12px; color: var(--tinta-3); }
+
+  @media print {
+    .trilho, .barra .botao { display: none; }
+    body { background: #fff; }
+  }
+</style>
+{% block estilo %}{% endblock %}
+</head>
+<body>
+<div class="aplicacao">
+
+  <nav class="trilho">
+    <div class="marca display">V</div>
+
+    <a href="{% url 'quadro' %}" class="{% if secao == 'quadro' %}ativo{% endif %}" title="Quadro de validações">
+      <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="5" height="16" rx="1.5"/><rect x="10" y="4" width="5" height="11" rx="1.5"/><rect x="17" y="4" width="4" height="7" rx="1.5"/></svg>
+    </a>
+    <a href="{% url 'biblioteca' %}" class="{% if secao == 'analitos' %}ativo{% endif %}" title="Fichas de analito">
+      <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3v6.2L4.6 17a2.4 2.4 0 0 0 2.1 3.6h10.6a2.4 2.4 0 0 0 2.1-3.6L15 9.2V3"/><path d="M7.5 3h9"/><path d="M6.6 14h10.8"/></svg>
+    </a>
+    <a href="/admin/" title="Cadastros">
+      <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 9h5M7 13h3"/><circle cx="17" cy="12" r="2"/></svg>
+    </a>
+  </nav>
+
+  <div class="conteudo">
+    {% block corpo %}{% endblock %}
+  </div>
+</div>
+</body>
+</html>

@@ -33,30 +33,7 @@ def _decimal_para_float(valor) -> float | None:
 
 def montar_especificacao(especificacao) -> espec.EspecificacaoQualidade:
     """Converte a especificação guardada no banco para o objeto do motor."""
-    return espec.EspecificacaoQualidade(
-        erro_total=espec.LimiteQualidade(
-            valor_pct=_decimal_para_float(especificacao.erro_total_maximo_pct),
-            referencia_pct=especificacao.erro_total_referencia,
-            limiar_absoluto=_decimal_para_float(especificacao.erro_total_limiar_absoluto),
-            valor_absoluto=_decimal_para_float(especificacao.erro_total_maximo_absoluto),
-            referencia_absoluto=especificacao.erro_total_referencia_absoluto,
-        ),
-        bias=espec.LimiteQualidade(
-            valor_pct=_decimal_para_float(especificacao.bias_maximo_pct),
-            referencia_pct=especificacao.bias_referencia,
-            limiar_absoluto=_decimal_para_float(especificacao.bias_limiar_absoluto),
-            valor_absoluto=_decimal_para_float(especificacao.bias_maximo_absoluto),
-            referencia_absoluto=especificacao.bias_referencia_absoluto,
-        ),
-        imprecisao_por_nivel={
-            limite.nivel: espec.LimiteQualidade(
-                valor_pct=_decimal_para_float(limite.maximo_pct),
-                referencia_pct=limite.referencia,
-            )
-            for limite in especificacao.limites_imprecisao.all()
-        },
-        nivel_significancia=_decimal_para_float(especificacao.nivel_significancia) or 0.05,
-    )
+    return especificacao.para_o_motor()
 
 
 def _pares_de_comparacao(estudo):
@@ -209,7 +186,9 @@ def calcular(estudo) -> dict:
     # precisar cruzar duas listas por índice.
     por_numero = {a["nivel"]: a for a in veredito["niveis"]}
     for item in precisao_por_nivel:
-        item["avaliacao"] = por_numero.get(item["numero"])
+        avaliacao = por_numero.get(item["numero"])
+        item["avaliacao"] = avaliacao
+        item["medidor_pct"] = _proporcao_do_limite(item["estatistica"]["cv_aplicavel"], avaliacao)
 
     return {
         "estudo": estudo,
@@ -223,6 +202,72 @@ def calcular(estudo) -> dict:
         "graficos": _graficos(estudo, precisao_por_nivel, comparabilidade),
         "avisos": _avisos(estudo, precisao_por_nivel, comparabilidade),
     }
+
+
+def retrato(estudo) -> dict:
+    """Versão do cálculo que pode ser congelada em JSON dentro do veredito.
+
+    Tira do resultado o que não é dado: a instância do estudo, os SVG dos
+    gráficos (que o relatório redesenha a partir dos mesmos números) e a
+    especificação, guardada aqui em forma legível para o auditor que abrir o
+    retrato daqui a cinco anos e precisar saber contra qual limite se decidiu.
+
+    O retrato é o que o relatório imprime. Recalcular na hora de imprimir
+    poderia devolver outro número — a ficha do analito pode ter mudado depois
+    da assinatura — e ninguém assinou esse outro número.
+    """
+    resultado = calcular(estudo)
+    especificacao = resultado["especificacao"]
+
+    congelado = {
+        chave: valor
+        for chave, valor in resultado.items()
+        if chave not in ("estudo", "graficos", "especificacao", "precisao")
+    }
+    congelado["estudo"] = estudo.identificacao
+    congelado["especificacao"] = _especificacao_legivel(especificacao)
+    congelado["precisao"] = [
+        {**bloco, "nivel": str(bloco["nivel"])} for bloco in resultado.get("precisao", [])
+    ]
+    return congelado
+
+
+def _especificacao_legivel(especificacao) -> dict:
+    """Os limites vigentes no momento do cálculo, com as respectivas fontes."""
+
+    def limite(item):
+        if item is None:
+            return None
+        return {
+            "valor_pct": item.valor_pct,
+            "referencia": item.referencia_pct,
+            "valor_absoluto": item.valor_absoluto,
+            "limiar_absoluto": item.limiar_absoluto,
+            "referencia_absoluto": item.referencia_absoluto,
+        }
+
+    return {
+        "erro_total": limite(especificacao.erro_total),
+        "bias": limite(especificacao.bias),
+        "imprecisao_por_nivel": {
+            str(nivel): limite(item) for nivel, item in especificacao.imprecisao_por_nivel.items()
+        },
+        "nivel_significancia": especificacao.nivel_significancia,
+    }
+
+
+def _proporcao_do_limite(cv_pct, avaliacao) -> int:
+    """Quanto do limite de imprecisão o CV observado ocupa, em percentual.
+
+    Serve à barra do painel lateral. Passa de 100 quando o CV estoura o limite —
+    a barra satura, mas o número ao lado continua dizendo a verdade.
+    """
+    if cv_pct is None or not avaliacao:
+        return 0
+    for indicador in avaliacao["indicadores"]:
+        if indicador["indicador"] == "imprecisão" and indicador["limite_pct"]:
+            return min(100, round(cv_pct / indicador["limite_pct"] * 100))
+    return 0
 
 
 def _modulo_efetivo(estudo) -> str:
