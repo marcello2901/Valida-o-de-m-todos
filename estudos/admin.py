@@ -6,6 +6,8 @@ liberado significa cancelá-lo e abrir outro, deixando o histórico visível.
 """
 
 from django.contrib import admin
+from django.urls import reverse
+from django.utils.html import format_html
 
 from .models import (
     AmostraComparacao,
@@ -37,7 +39,7 @@ class AmostraQualitativaInline(admin.TabularInline):
 
 @admin.register(Estudo)
 class EstudoAdmin(admin.ModelAdmin):
-    list_display = ["identificacao", "mensurando", "tipo", "modulo", "desenho_precisao", "situacao", "data_inicio"]
+    list_display = ["identificacao", "mensurando", "tipo", "modulo", "situacao", "data_inicio", "ver_calculos"]
     list_filter = ["situacao", "tipo", "modulo", "desenho_precisao", "laboratorio"]
     search_fields = ["identificacao", "mensurando__nome"]
     date_hierarchy = "data_inicio"
@@ -68,6 +70,12 @@ class EstudoAdmin(admin.ModelAdmin):
         ("Período", {"fields": ["data_inicio", "data_conclusao"]}),
         ("Registro", {"fields": ["criado_por", "observacoes"]}),
     ]
+
+    @admin.display(description="cálculos")
+    def ver_calculos(self, obj):
+        """Link para a tela de resultado — onde os números aparecem."""
+        url = reverse("resultado_estudo", args=[obj.pk])
+        return format_html('<a href="{}" target="_blank">ver resultado &rarr;</a>', url)
 
     def get_readonly_fields(self, request, obj=None):
         """Estudo liberado não se edita — cancela-se e refaz-se."""
