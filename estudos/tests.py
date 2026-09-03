@@ -18,8 +18,15 @@ from catalogo.models import (
     Mensurando,
     SistemaAnalitico,
 )
-from contas.models import Assinatura, Laboratorio, Usuario
-from estudos.models import AmostraComparacao, Estudo, NivelEstudo, Replica
+from contas.models import Assinatura, Laboratorio, RegistroAuditoria, Usuario
+from estudos.models import (
+    VERSAO_MOTOR,
+    AmostraComparacao,
+    Estudo,
+    NivelEstudo,
+    Replica,
+    Veredito,
+)
 from motor import precisao
 
 
@@ -259,3 +266,155 @@ class TestQuadro(TestCase):
 
     def test_visitante_vai_para_o_login(self):
         self.assertEqual(self.client.get(self.url).status_code, 302)
+
+
+class TestCalcularELiberar(TestCase):
+    """As duas ações que movem o estudo pelo quadro.
+
+    São o ponto em que um cálculo vira registro de qualidade, então o que se
+    testa aqui é sobretudo o que elas *recusam* fazer.
+    """
+
+    def setUp(self):
+        self.laboratorio = montar_laboratorio("Lab A", "11.111.111/0001-11")
+        self.responsavel = Usuario.objects.create_user(
+            username="responsavel", password="senha-longa-de-teste",
+            laboratorio=self.laboratorio, funcao=Usuario.RESPONSAVEL,
+        )
+        self.analista = Usuario.objects.create_user(
+            username="analista", password="senha-longa-de-teste",
+            laboratorio=self.laboratorio, funcao=Usuario.ANALISTA,
+        )
+        self.estudo = montar_estudo(self.laboratorio, self.responsavel)
+        self.calcular_url = reverse("concluir_estudo", args=[self.estudo.pk])
+        self.liberar_url = reverse("liberar_estudo", args=[self.estudo.pk])
+
+    def test_calcular_congela_o_retrato_e_move_o_estudo(self):
+        self.client.force_login(self.analista)
+
+        self.client.post(self.calcular_url)
+
+        self.estudo.refresh_from_db()
+        self.assertEqual(self.estudo.situacao, Estudo.CONCLUIDO)
+        self.assertEqual(self.estudo.coluna_quadro(), Estudo.COLUNA_CALCULADO)
+        veredito = self.estudo.veredito
+        self.assertEqual(veredito.versao_motor, VERSAO_MOTOR)
+        self.assertIn("precisao", veredito.detalhamento)
+
+    def test_o_retrato_guarda_os_limites_vigentes_no_momento(self):
+        # É o que permite defender o número numa auditoria: a ficha pode mudar
+        # depois, mas o relatório mostra contra o que se decidiu na época.
+        self.client.force_login(self.analista)
+
+        self.client.post(self.calcular_url)
+
+        limites = self.estudo.veredito.detalhamento["especificacao"]
+        self.assertEqual(limites["erro_total"]["valor_pct"], 12.0)
+        self.assertEqual(limites["erro_total"]["referencia"], "ControlLab")
+
+    def test_calcular_registra_na_trilha_de_auditoria(self):
+        self.client.force_login(self.analista)
+
+        self.client.post(self.calcular_url)
+
+        registro = RegistroAuditoria.objects.get(acao="calculou o estudo")
+        self.assertEqual(registro.usuario, self.analista)
+        self.assertEqual(registro.laboratorio, self.laboratorio)
+
+    def test_estudo_sem_dado_nenhum_nao_calcula(self):
+        self.estudo.amostras_comparacao.all().delete()
+        Replica.objects.filter(nivel__estudo=self.estudo).delete()
+        self.client.force_login(self.analista)
+
+        self.client.post(self.calcular_url)
+
+        self.estudo.refresh_from_db()
+        self.assertEqual(self.estudo.situacao, Estudo.RASCUNHO)
+        self.assertFalse(hasattr(self.estudo, "veredito"))
+
+    def test_recalcular_substitui_o_retrato_anterior(self):
+        self.client.force_login(self.analista)
+        self.client.post(self.calcular_url)
+
+        self.client.post(self.calcular_url)
+
+        self.assertEqual(Veredito.objects.filter(estudo=self.estudo).count(), 1)
+        self.assertTrue(RegistroAuditoria.objects.filter(acao="recalculou o estudo").exists())
+
+    def test_get_nao_calcula(self):
+        # Mudança de estado por GET seria disparada por um simples recarregar.
+        self.client.force_login(self.analista)
+
+        resposta = self.client.get(self.calcular_url)
+
+        self.assertEqual(resposta.status_code, 405)
+        self.assertFalse(Veredito.objects.exists())
+
+    def test_laboratorio_alheio_nao_calcula(self):
+        outro = montar_laboratorio("Lab B", "22.222.222/0001-22")
+        intruso = Usuario.objects.create_user(
+            username="intruso", password="senha-longa-de-teste", laboratorio=outro
+        )
+        self.client.force_login(intruso)
+
+        self.assertEqual(self.client.post(self.calcular_url).status_code, 404)
+        self.assertFalse(Veredito.objects.exists())
+
+    def test_analista_nao_libera(self):
+        # Assinar relatório de validação é ato do responsável técnico.
+        self.client.force_login(self.analista)
+        self.client.post(self.calcular_url)
+
+        self.client.post(self.liberar_url)
+
+        self.estudo.refresh_from_db()
+        self.assertEqual(self.estudo.situacao, Estudo.CONCLUIDO)
+
+    def test_responsavel_libera_e_assina(self):
+        self.client.force_login(self.responsavel)
+        self.client.post(self.calcular_url)
+
+        self.client.post(self.liberar_url)
+
+        self.estudo.refresh_from_db()
+        self.assertEqual(self.estudo.situacao, Estudo.LIBERADO)
+        self.assertEqual(self.estudo.veredito.liberado_por, self.responsavel)
+        self.assertIsNotNone(self.estudo.veredito.liberado_em)
+
+    def test_nao_libera_sem_calcular_antes(self):
+        self.client.force_login(self.responsavel)
+
+        self.client.post(self.liberar_url)
+
+        self.estudo.refresh_from_db()
+        self.assertEqual(self.estudo.situacao, Estudo.RASCUNHO)
+
+    def test_estudo_liberado_nao_recalcula(self):
+        # Recalcular um relatório assinado descolaria o número do que se assinou.
+        self.client.force_login(self.responsavel)
+        self.client.post(self.calcular_url)
+        self.client.post(self.liberar_url)
+        congelado_em = self.estudo.veredito.calculado_em
+
+        self.client.post(self.calcular_url)
+
+        self.estudo.refresh_from_db()
+        self.assertEqual(self.estudo.situacao, Estudo.LIBERADO)
+        self.assertEqual(self.estudo.veredito.calculado_em, congelado_em)
+
+    def test_a_tela_avisa_quando_o_recalculo_diverge_do_assinado(self):
+        # A ficha do analito apertou depois da assinatura: a tela recalcula ao
+        # vivo, o relatório mantém o número assinado, e o usuário precisa ver
+        # que os dois deixaram de bater.
+        self.client.force_login(self.responsavel)
+        self.client.post(self.calcular_url)
+        self.assertEqual(self.estudo.veredito.resultado, Veredito.APROVADO)
+
+        ficha = self.estudo.especificacao
+        ficha.erro_total_maximo_pct = Decimal("1.00")
+        ficha.save()
+        ficha.limites_imprecisao.update(maximo_pct=Decimal("0.25"))
+
+        resposta = self.client.get(reverse("resultado_estudo", args=[self.estudo.pk]))
+
+        self.assertContains(resposta, "não bate com o veredito congelado")

@@ -17,5 +17,7 @@ urlpatterns = [
     path("quadro/", estudos_views.quadro, name="quadro"),
     path("analitos/", catalogo_views.biblioteca, name="biblioteca"),
     path("estudos/<int:estudo_id>/resultado/", estudos_views.resultado, name="resultado_estudo"),
+    path("estudos/<int:estudo_id>/calcular/", estudos_views.concluir, name="concluir_estudo"),
+    path("estudos/<int:estudo_id>/liberar/", estudos_views.liberar, name="liberar_estudo"),
     path("admin/", admin.site.urls),
 ]

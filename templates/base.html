@@ -120,6 +120,17 @@
   .vazio { color: var(--tinta-3); font-style: italic; }
   .nota { font-size: 12px; color: var(--tinta-3); }
 
+  /* Recado de uma ação que acabou de acontecer. Ícone e texto, nunca só cor. */
+  .recados { padding: 12px 24px 0; display: flex; flex-direction: column; gap: 8px; }
+  .recado {
+    display: flex; align-items: start; gap: 9px; font-size: 13px; line-height: 1.45;
+    padding: 11px 14px; border-radius: 8px; border: 1px solid var(--linha); background: var(--superficie);
+  }
+  .recado svg { flex-shrink: 0; margin-top: 1px; }
+  .recado--success { border-color: #cfe8cf; background: var(--aprovado-fundo); color: #17520f; }
+  .recado--warning { border-color: #ecdcb0; background: var(--atencao-fundo); color: var(--atencao-tinta); }
+  .recado--error { border-color: #f0cccc; background: #fdf3f3; color: #7a1f1f; }
+
   @media print {
     .trilho, .barra .botao { display: none; }
     body { background: #fff; }
@@ -145,6 +156,22 @@
   </nav>
 
   <div class="conteudo">
+    {% if messages %}
+    <div class="recados">
+      {% for mensagem in messages %}
+      <div class="recado recado--{{ mensagem.tags }}">
+        {% if mensagem.tags == "error" or mensagem.tags == "warning" %}
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.5v.01"/></svg>
+        {% elif mensagem.tags == "success" %}
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7"/></svg>
+        {% else %}
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5.5M12 7.5v.01"/></svg>
+        {% endif %}
+        <span>{{ mensagem }}</span>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
     {% block corpo %}{% endblock %}
   </div>
 </div>

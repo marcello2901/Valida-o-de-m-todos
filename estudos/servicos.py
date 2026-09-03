@@ -14,6 +14,9 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+from django.db import transaction
+from django.utils import timezone
+
 from motor import comparabilidade as comp
 from motor import concordancia as conc
 from motor import especificacoes as espec
@@ -22,7 +25,9 @@ from motor import precisao as prec
 from motor import qualitativo as qual
 from motor import veredito as ver
 
-from contas.models import Assinatura
+from contas.models import Assinatura, RegistroAuditoria
+
+from .models import Veredito
 
 
 def _decimal_para_float(valor) -> float | None:
@@ -363,3 +368,117 @@ def _avisos(estudo, precisao_por_nivel, comparabilidade) -> list[str]:
             )
 
     return avisos
+
+
+# --- Ações que mudam o estado do estudo -------------------------------------
+#
+# Duas ações separadas de propósito, porque são dois atos distintos: calcular é
+# técnico e reversível; liberar é a assinatura do responsável técnico e vira
+# registro de qualidade do laboratório. Juntar as duas num botão só faria a
+# assinatura acontecer por descuido.
+
+
+class AcaoRecusada(Exception):
+    """A ação não pode ser executada no estado atual do estudo."""
+
+
+def concluir(estudo, usuario):
+    """Congela o cálculo do estudo num veredito.
+
+    A partir daqui a tela e o relatório passam a mostrar este retrato, não um
+    recálculo. É o que garante que o número assinado hoje continue sendo o
+    número impresso daqui a cinco anos, mesmo que a ficha do analito mude ou que
+    o motor de cálculo evolua.
+
+    Recalcular continua permitido enquanto ninguém assinou: o laboratório
+    corrige uma réplica digitada errada e calcula de novo. Depois da liberação,
+    não — aí o caminho é cancelar e abrir outro estudo.
+    """
+    if estudo.situacao == estudo.LIBERADO:
+        raise AcaoRecusada(
+            "Este estudo já foi liberado pelo responsável técnico. Um relatório "
+            "assinado não é recalculado — cancele o estudo e abra outro."
+        )
+    if estudo.situacao == estudo.CANCELADO:
+        raise AcaoRecusada("Estudo cancelado não produz veredito.")
+
+    andamento = estudo.progresso()
+    if not andamento["iniciado"]:
+        raise AcaoRecusada(
+            "Não há dados lançados neste estudo. Lance as réplicas de controle "
+            "ou as amostras pareadas antes de calcular."
+        )
+
+    resultado = retrato(estudo)
+    anterior = getattr(estudo, "veredito", None)
+
+    with transaction.atomic():
+        if anterior is not None:
+            anterior.delete()
+        veredito = Veredito.objects.create(
+            estudo=estudo,
+            resultado=resultado["veredito"]["status"],
+            detalhamento=resultado,
+        )
+        estudo.situacao = estudo.CONCLUIDO
+        estudo.data_conclusao = timezone.localdate()
+        estudo.save(update_fields=["situacao", "data_conclusao"])
+
+        RegistroAuditoria.objects.create(
+            laboratorio=estudo.laboratorio,
+            usuario=usuario if usuario.is_authenticated else None,
+            acao="recalculou o estudo" if anterior else "calculou o estudo",
+            objeto=estudo.identificacao,
+            detalhe={
+                "resultado": veredito.resultado,
+                "versao_motor": veredito.versao_motor,
+                "resultado_anterior": anterior.resultado if anterior else None,
+                "replicas": andamento["precisao_feita"],
+                "amostras": andamento["comparacao_feita"],
+                "avisos": resultado.get("avisos", []),
+            },
+        )
+
+    return veredito
+
+
+def liberar(estudo, usuario):
+    """Assina o veredito congelado, transformando-o em registro de qualidade.
+
+    Reprovado e indeterminado também se assinam: um estudo que falhou é um
+    resultado, e escondê-lo seria pior do que registrá-lo. O que a assinatura
+    afirma é que aquele cálculo, com aqueles dados, foi conferido — não que o
+    método passou.
+    """
+    if not usuario.pode_assinar_relatorio():
+        raise AcaoRecusada(
+            "Só o responsável técnico assina um relatório de validação."
+        )
+    if estudo.situacao == estudo.LIBERADO:
+        raise AcaoRecusada("Este estudo já foi liberado.")
+
+    veredito = getattr(estudo, "veredito", None)
+    if veredito is None:
+        raise AcaoRecusada("Calcule o estudo antes de liberar o relatório.")
+
+    with transaction.atomic():
+        veredito.liberado_por = usuario
+        veredito.liberado_em = timezone.now()
+        veredito.save(update_fields=["liberado_por", "liberado_em"])
+
+        estudo.situacao = estudo.LIBERADO
+        estudo.save(update_fields=["situacao"])
+
+        RegistroAuditoria.objects.create(
+            laboratorio=estudo.laboratorio,
+            usuario=usuario,
+            acao="liberou o relatório",
+            objeto=estudo.identificacao,
+            detalhe={
+                "resultado": veredito.resultado,
+                "versao_motor": veredito.versao_motor,
+                "calculado_em": veredito.calculado_em.isoformat(),
+            },
+        )
+
+    return veredito
