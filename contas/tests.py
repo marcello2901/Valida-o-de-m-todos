@@ -5,8 +5,13 @@ fato de que o pacote completo cobre os módulos isolados sem precisar de três
 assinaturas separadas.
 """
 
+import io
+import os
 from datetime import timedelta
+from unittest import mock
 
+from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
@@ -281,3 +286,70 @@ class TestRotulosCurtos(TestCase):
         ]
 
         self.assertEqual(cortados, [], "use um rótulo curto de verdade, não truncatewords")
+
+
+class TestContaDeAdministracao(TestCase):
+    """O comando que cria a conta de administração na implantação.
+
+    Existe porque o plano gratuito da hospedagem não tem terminal no servidor:
+    sem ele o site sobe sem nenhum usuário e ninguém entra. Como roda a cada
+    implantação, precisa ser seguro de repetir.
+    """
+
+    def rodar(self, **variaveis):
+        saida = io.StringIO()
+        with mock.patch.dict(os.environ, variaveis, clear=False):
+            call_command("criar_admin", stdout=saida)
+        return saida.getvalue()
+
+    def test_cria_a_conta_na_primeira_vez(self):
+        self.rodar(ADMIN_USUARIO="chefe", ADMIN_SENHA="senha-longa-de-verdade")
+
+        conta = Usuario.objects.get(username="chefe")
+        self.assertTrue(conta.is_staff)
+        self.assertTrue(conta.is_superuser)
+        self.assertTrue(conta.check_password("senha-longa-de-verdade"))
+
+    def test_rodar_de_novo_atualiza_em_vez_de_falhar(self):
+        # O comando roda a cada implantação; falhar na segunda pararia o deploy.
+        self.rodar(ADMIN_USUARIO="chefe", ADMIN_SENHA="senha-longa-de-verdade")
+
+        self.rodar(ADMIN_USUARIO="chefe", ADMIN_SENHA="outra-senha-bem-longa")
+
+        self.assertEqual(Usuario.objects.filter(username="chefe").count(), 1)
+        self.assertTrue(
+            Usuario.objects.get(username="chefe").check_password("outra-senha-bem-longa")
+        )
+
+    def test_sem_as_variaveis_nao_faz_nada(self):
+        # Quem roda na própria máquina não deve ganhar uma conta surpresa.
+        saida = self.rodar(ADMIN_USUARIO="", ADMIN_SENHA="")
+
+        self.assertEqual(Usuario.objects.count(), 0)
+        self.assertIn("nenhuma conta criada", saida)
+
+    def test_senha_curta_e_recusada(self):
+        # É a senha do administrador de um sistema exposto na internet.
+        with self.assertRaises(CommandError):
+            self.rodar(ADMIN_USUARIO="chefe", ADMIN_SENHA="123")
+
+        self.assertFalse(Usuario.objects.filter(username="chefe").exists())
+
+
+class TestDadosDeExemplo(TestCase):
+    def test_recusa_rodar_fora_de_desenvolvimento(self):
+        # O comando cria um usuário de senha conhecida.
+        with self.settings(DEBUG=False):
+            with mock.patch.dict(os.environ, {"PERMITIR_DADOS_EXEMPLO": "0"}):
+                with self.assertRaises(CommandError):
+                    call_command("dados_exemplo", stdout=io.StringIO())
+
+    def test_a_liberacao_explicita_deixa_rodar_e_avisa(self):
+        with self.settings(DEBUG=False):
+            saida = io.StringIO()
+            with mock.patch.dict(os.environ, {"PERMITIR_DADOS_EXEMPLO": "1"}):
+                call_command("dados_exemplo", stdout=saida)
+
+        self.assertIn("ATENÇÃO", saida.getvalue())
+        self.assertIn("não deve receber dado real", saida.getvalue())
+        self.assertTrue(Usuario.objects.filter(username="analista.demo").exists())

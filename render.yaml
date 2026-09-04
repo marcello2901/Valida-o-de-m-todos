@@ -1,0 +1,63 @@
+# Descrição da hospedagem no Render.
+#
+# Com este arquivo no repositório, o Render monta o site e o banco sozinho: você
+# aponta para o repositório uma vez e ele lê daqui o resto. O passo a passo com
+# telas está em DEPLOY.md.
+#
+# O plano gratuito tem dois limites que valem estar à vista, não escondidos numa
+# nota de rodapé:
+#
+#   1. O site dorme depois de 15 minutos sem acesso. A primeira visita depois
+#      disso demora perto de um minuto para responder. Serve para testar e
+#      demonstrar; não serve para um laboratório trabalhar.
+#   2. O banco de dados gratuito é apagado 30 dias depois de criado. É preciso
+#      criar outro e rodar as migrações de novo. Nada que esteja lá dentro deve
+#      ser insubstituível.
+
+databases:
+  - name: validacao-banco
+    databaseName: validacao
+    plan: free
+
+services:
+  - type: web
+    name: validacao-metodos
+    runtime: python
+    plan: free
+    region: oregon
+    buildCommand: "./build.sh"
+    startCommand: "gunicorn config.wsgi:application"
+    healthCheckPath: /entrar/
+    envVars:
+      # O Render gera uma chave secreta forte e a guarda. Ela assina as sessões:
+      # com a chave de desenvolvimento, qualquer um forjaria um login.
+      - key: DJANGO_SECRET_KEY
+        generateValue: true
+
+      # Desligar o DEBUG é o que ativa HTTPS obrigatório, cookies seguros e o
+      # cabeçalho HSTS. Também é o que impede a página de erro do Django de
+      # mostrar a configuração inteira para quem visitar o site.
+      - key: DJANGO_DEBUG
+        value: "0"
+
+      - key: DATABASE_URL
+        fromDatabase:
+          name: validacao-banco
+          property: connectionString
+
+      - key: PYTHON_VERSION
+        value: "3.12.6"
+
+      # A conta de administração é criada na construção, porque o plano gratuito
+      # não tem terminal no servidor. Defina a senha no painel do Render — ela
+      # não deve estar neste arquivo, que vive no repositório.
+      - key: ADMIN_USUARIO
+        value: admin
+      - key: ADMIN_SENHA
+        sync: false
+
+      # Dados de demonstração. Em "1", o site sobe com o laboratório de exemplo
+      # e um usuário de senha conhecida — bom para mostrar o sistema, e motivo
+      # suficiente para nunca lançar dado real de paciente aqui.
+      - key: PERMITIR_DADOS_EXEMPLO
+        value: "0"

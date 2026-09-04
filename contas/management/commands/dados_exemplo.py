@@ -10,6 +10,7 @@ conferir se o modelo de dados representa mesmo a planilha.
 Uso:  python manage.py dados_exemplo
 """
 
+import os
 from datetime import date, datetime, timedelta
 
 from django.utils import timezone
@@ -40,12 +41,28 @@ class Command(BaseCommand):
     help = "Cria um laboratório de demonstração com os dados da planilha de FT4."
 
     def handle(self, *args, **opcoes):
-        # O comando cria um usuário com senha conhecida. Isso é aceitável numa
-        # máquina de desenvolvimento e inaceitável em produção.
-        if not settings.DEBUG:
+        # O comando cria um usuário com senha conhecida — aceitável na máquina de
+        # quem desenvolve, inaceitável num site aberto na internet.
+        #
+        # A porta de saída existe porque um ambiente de demonstração precisa de
+        # dados para demonstrar. Mas ela é explícita e nomeada: ninguém liga
+        # PERMITIR_DADOS_EXEMPLO sem saber o que está ligando, e o comando avisa
+        # em voz alta o que acabou de criar.
+        liberado = os.environ.get("PERMITIR_DADOS_EXEMPLO") == "1"
+        if not settings.DEBUG and not liberado:
             raise CommandError(
                 "Este comando cria um usuário com senha conhecida e só roda em "
-                "desenvolvimento (DEBUG ligado). Em produção, cadastre pelo painel."
+                "desenvolvimento. Para usá-lo num ambiente de demonstração, "
+                "defina PERMITIR_DADOS_EXEMPLO=1 — e não aponte esse ambiente "
+                "para dado real de paciente."
+            )
+        if not settings.DEBUG:
+            self.stdout.write(
+                self.style.WARNING(
+                    "\nATENÇÃO: dados de demonstração num ambiente sem DEBUG.\n"
+                    f"O usuário analista.demo existe com a senha {SENHA_DEMONSTRACAO}.\n"
+                    "Este site não deve receber dado real de paciente.\n"
+                )
             )
 
         with transaction.atomic():
@@ -64,8 +81,9 @@ class Command(BaseCommand):
         self.stdout.write(f"  Estudo:      {estudo.identificacao}")
         self.stdout.write(f"  Usuário:     {usuario.username}   senha: {SENHA_DEMONSTRACAO}")
         self.stdout.write(
-            "\nAbra http://localhost:8000/admin/ e navegue por "
-            "Laboratórios, Sistemas analíticos e Estudos de validação.\n"
+            "\nAbra o endereço do sistema (na sua máquina, http://localhost:8000/) "
+            "e entre com o usuário acima. O quadro de validações é a tela inicial;\n"
+            "os cadastros ficam em Configurações.\n"
         )
 
     def _laboratorio(self) -> Laboratorio:

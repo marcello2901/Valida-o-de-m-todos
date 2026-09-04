@@ -34,6 +34,14 @@ CSRF_TRUSTED_ORIGINS = [
     if origem.strip()
 ]
 
+# O Render publica o endereço do site nesta variável. Ler daqui evita o erro
+# mais comum de primeira implantação: subir tudo certo e receber
+# "DisallowedHost" porque ninguém sabia qual endereço digitar na configuração.
+ENDERECO_DO_RENDER = os.environ.get("RENDER_EXTERNAL_HOSTNAME", "").strip()
+if ENDERECO_DO_RENDER:
+    ALLOWED_HOSTS.append(ENDERECO_DO_RENDER)
+    CSRF_TRUSTED_ORIGINS.append(f"https://{ENDERECO_DO_RENDER}")
+
 if not DEBUG:
     if SECRET_KEY == CHAVE_DESENVOLVIMENTO:
         raise ImproperlyConfigured(

@@ -17,3 +17,6 @@ staticfiles/
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Banco usado só para ensaiar o caminho de produção na máquina local
+banco-producao.sqlite3
