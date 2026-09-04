@@ -137,6 +137,16 @@ class Assinatura(models.Model):
     def __str__(self):
         return f"{self.laboratorio} — {self.get_modulo_display()}"
 
+    _MODULO_CURTO = {
+        "precisao": "Precisão",
+        "comparabilidade": "Comparabilidade",
+        "completo": "Precisão + Comparabilidade",
+    }
+
+    def modulo_curto(self) -> str:
+        """Rótulo de cartão. O longo explica o módulo; este só o nomeia."""
+        return self._MODULO_CURTO.get(self.modulo, self.modulo)
+
     def vigente(self, em=None) -> bool:
         hoje = em or timezone.localdate()
         if self.inicio > hoje:

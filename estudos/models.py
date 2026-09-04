@@ -73,6 +73,34 @@ class Estudo(models.Model):
         related_name="estudos"
     )
 
+    # --- Intervalos de referência de cada metodologia -----------------------
+    #
+    # Ficam no estudo, e não no mensurando, porque são propriedade da
+    # metodologia: ao trocar de método o laboratório costuma trocar também o
+    # intervalo que imprime no laudo. A concordância clínica classifica cada
+    # lado contra o seu próprio intervalo — é a diferença que de fato chega ao
+    # paciente, não a diferença analítica bruta.
+    #
+    # Em branco, valem os do mensurando: quem manteve o intervalo antigo não
+    # precisa redigitá-lo em toda validação.
+
+    referencia_comparacao_inferior = models.DecimalField(
+        "referência do método de comparação — inferior", max_digits=14, decimal_places=4,
+        null=True, blank=True,
+    )
+    referencia_comparacao_superior = models.DecimalField(
+        "referência do método de comparação — superior", max_digits=14, decimal_places=4,
+        null=True, blank=True,
+    )
+    referencia_teste_inferior = models.DecimalField(
+        "referência do método em teste — inferior", max_digits=14, decimal_places=4,
+        null=True, blank=True,
+    )
+    referencia_teste_superior = models.DecimalField(
+        "referência do método em teste — superior", max_digits=14, decimal_places=4,
+        null=True, blank=True,
+    )
+
     desenho_precisao = models.CharField(
         "desenho do estudo de precisão",
         max_length=25,
@@ -152,6 +180,20 @@ class Estudo(models.Model):
     #
     # O quadro não mostra formulário: mostra o quanto falta e qual é a próxima
     # ação. Estes métodos são a fonte desses dois números.
+
+    def intervalo_de_comparacao(self):
+        """Intervalo do método antigo: o do estudo, ou o do mensurando."""
+        if self.referencia_comparacao_inferior is not None or self.referencia_comparacao_superior is not None:
+            return self.referencia_comparacao_inferior, self.referencia_comparacao_superior
+        return self.mensurando.referencia_inferior, self.mensurando.referencia_superior
+
+    def intervalo_de_teste(self):
+        """Intervalo do método novo.
+
+        Devolve ``(None, None)`` quando o estudo não declara um próprio — o que
+        significa "o mesmo do método antigo", e não "sem intervalo".
+        """
+        return self.referencia_teste_inferior, self.referencia_teste_superior
 
     def replicas_esperadas(self) -> int:
         return self.niveis.count() * self.minimo_replicas_por_nivel()
@@ -256,6 +298,39 @@ class NivelEstudo(models.Model):
         help_text="Usada para decidir entre o limite percentual e o absoluto."
     )
 
+    # --- Alvo do bias analítico ---------------------------------------------
+    #
+    # A exatidão do estudo de precisão sai da comparação entre a média global das
+    # réplicas e a média do mesmo lote de controle no grupo de pares. Sem esse
+    # alvo informado o sistema não avalia exatidão: um alvo inventado produziria
+    # um bias inventado, e é exatamente esse tipo de número que não pode existir
+    # num relatório de validação.
+
+    ELAB = "e-Lab"
+    UNITY = "Unity"
+    FLEET = "fleet"
+    OUTRO = "outro"
+
+    PROVEDORES = [
+        (ELAB, "e-Lab"),
+        (UNITY, "Unity (Bio-Rad)"),
+        (FLEET, "fleet do fabricante"),
+        (OUTRO, "outro programa interlaboratorial"),
+    ]
+
+    media_interlaboratorial = models.DecimalField(
+        "média do estudo interlaboratorial", max_digits=14, decimal_places=4,
+        null=True, blank=True,
+        help_text=(
+            "Média do mesmo lote de controle no grupo de pares. É o alvo do bias. "
+            "Em branco, a exatidão deste nível não é avaliada."
+        ),
+    )
+    provedor_interlaboratorial = models.CharField(
+        "programa interlaboratorial", max_length=20, choices=PROVEDORES, blank=True,
+        help_text="De onde veio a média informada — vai para o relatório.",
+    )
+
     class Meta:
         verbose_name = "nível do estudo"
         verbose_name_plural = "níveis do estudo"
@@ -266,6 +341,16 @@ class NivelEstudo(models.Model):
 
     def __str__(self):
         return f"Nível {self.numero} — {self.controle.nome}"
+
+    def alvo_do_bias(self):
+        """A média interlaboratorial como ``float``, ou ``None`` se não informada."""
+        return float(self.media_interlaboratorial) if self.media_interlaboratorial is not None else None
+
+    def origem_do_alvo(self) -> str:
+        """Frase que o relatório imprime ao lado do bias."""
+        if self.media_interlaboratorial is None:
+            return ""
+        return self.get_provedor_interlaboratorial_display() or "programa interlaboratorial"
 
 
 class Replica(models.Model):

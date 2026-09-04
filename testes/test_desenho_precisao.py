@@ -17,10 +17,10 @@ class TestDesenhoCorridaUnica:
 
         resultado = precisao.avaliar_precisao(replicas, precisao.DESENHO_CORRIDA_UNICA)
 
-        assert resultado["cv_repetibilidade"] is not None
+        assert resultado["cv"] is not None
         assert resultado["cv_intermediaria"] is None
-        assert resultado["tipo_cv_aplicavel"] == precisao.REPETIBILIDADE
-        assert resultado["cv_aplicavel"] == resultado["cv_repetibilidade"]
+        assert resultado["tipo_cv_aplicavel"] == precisao.CV_DA_CORRIDA
+        assert resultado["cv_aplicavel"] == resultado["cv"]
 
     def test_sempre_avisa_que_subestima_o_erro_da_rotina(self):
         # Mesmo com o número de réplicas em dia, o aviso permanece: a variação
@@ -63,25 +63,57 @@ class TestDesenhoMultiplasCorridas:
             [10.0, 10.2, 9.8, 10.1, 9.9],
         ]
 
-    def test_mede_as_duas_precisoes(self):
+    def test_o_cv_avaliado_e_o_agrupado_das_corridas(self):
         resultado = precisao.avaliar_precisao(
             self.cinco_dias(), precisao.DESENHO_MULTIPLAS_CORRIDAS
         )
 
-        assert resultado["cv_repetibilidade"] is not None
-        assert resultado["cv_intermediaria"] is not None
-        assert resultado["tipo_cv_aplicavel"] == precisao.INTERMEDIARIA
+        assert resultado["cv"] is not None
+        assert resultado["cv_aplicavel"] == resultado["cv"]
+        assert resultado["tipo_cv_aplicavel"] == precisao.CV_AGRUPADO
         assert resultado["atende_minimo"] is True
         assert resultado["avisos"] == []
 
-    def test_o_cv_que_vai_para_o_erro_total_e_o_intermediario(self):
-        # É o número maior, e é o correto: representa o método na rotina.
+    def test_traz_a_estatistica_de_cada_corrida(self):
         resultado = precisao.avaliar_precisao(
             self.cinco_dias(), precisao.DESENHO_MULTIPLAS_CORRIDAS
         )
 
-        assert resultado["cv_aplicavel"] == resultado["cv_intermediaria"]
-        assert resultado["cv_intermediaria"] >= resultado["cv_repetibilidade"]
+        assert [c["corrida"] for c in resultado["corridas"]] == [1, 2, 3, 4, 5]
+        primeira = resultado["corridas"][0]
+        assert primeira["n"] == 5
+        assert primeira["media"] == pytest.approx(10.0)
+        assert primeira["desvio_padrao"] == pytest.approx(0.158113883, rel=1e-6)
+        assert primeira["cv"] == pytest.approx(1.58113883, rel=1e-6)
+
+    def test_o_cv_agrupado_e_a_repetibilidade_e_fica_abaixo_da_intermediaria(self):
+        # O agrupamento junta corridas para ganhar graus de liberdade, não para
+        # incorporar a variação entre elas: o número continua sendo dispersão
+        # dentro de corrida, e por isso é o menor dos dois.
+        resultado = precisao.avaliar_precisao(
+            self.cinco_dias(), precisao.DESENHO_MULTIPLAS_CORRIDAS
+        )
+
+        assert resultado["cv"] < resultado["cv_intermediaria"]
+
+    def test_avisa_quando_so_a_variacao_entre_dias_estoura_o_limite(self):
+        # O caso perigoso da simplificação: passa no relatório, falha na rotina.
+        resultado = precisao.avaliar_precisao(
+            self.cinco_dias(), precisao.DESENHO_MULTIPLAS_CORRIDAS
+        )
+        limite = (resultado["cv"] + resultado["cv_intermediaria"]) / 2
+
+        alerta = precisao.alerta_precisao_intermediaria(resultado, limite)
+
+        assert alerta is not None
+        assert "variação entre os dias" in alerta
+
+    def test_nao_alerta_quando_as_duas_precisoes_cabem_no_limite(self):
+        resultado = precisao.avaliar_precisao(
+            self.cinco_dias(), precisao.DESENHO_MULTIPLAS_CORRIDAS
+        )
+
+        assert precisao.alerta_precisao_intermediaria(resultado, 10.0) is None
 
     def test_menos_de_cinco_corridas_gera_aviso(self):
         resultado = precisao.avaliar_precisao(

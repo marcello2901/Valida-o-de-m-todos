@@ -19,19 +19,51 @@ from .models import (
 )
 
 
-class NivelEstudoInline(admin.TabularInline):
+class SomenteLeituraAposLiberacao:
+    """Impede edição de dado bruto de estudo já assinado.
+
+    O cabeçalho do módulo promete isso, mas até aqui a promessa valia só para os
+    campos do estudo: réplicas e amostras continuavam editáveis pelos inlines.
+    Um relatório assinado cujos dados de origem podem mudar depois não é
+    rastreável — é justamente o que a trilha existe para impedir.
+    """
+
+    def _liberado(self, obj) -> bool:
+        estudo = getattr(obj, "estudo", obj)
+        return getattr(estudo, "situacao", None) == Estudo.LIBERADO
+
+    def has_add_permission(self, request, obj=None):
+        if obj is not None and self._liberado(obj):
+            return False
+        return super().has_add_permission(request, obj)
+
+    def has_change_permission(self, request, obj=None):
+        if obj is not None and self._liberado(obj):
+            return False
+        return super().has_change_permission(request, obj)
+
+    def has_delete_permission(self, request, obj=None):
+        if obj is not None and self._liberado(obj):
+            return False
+        return super().has_delete_permission(request, obj)
+
+
+class NivelEstudoInline(SomenteLeituraAposLiberacao, admin.TabularInline):
     model = NivelEstudo
     extra = 1
-    fields = ["numero", "controle", "concentracao_declarada"]
+    fields = [
+        "numero", "controle", "concentracao_declarada",
+        "media_interlaboratorial", "provedor_interlaboratorial",
+    ]
 
 
-class AmostraComparacaoInline(admin.TabularInline):
+class AmostraComparacaoInline(SomenteLeituraAposLiberacao, admin.TabularInline):
     model = AmostraComparacao
     extra = 0
     fields = ["identificacao", "valor_comparacao", "valor_teste", "excluida", "justificativa_exclusao"]
 
 
-class AmostraQualitativaInline(admin.TabularInline):
+class AmostraQualitativaInline(SomenteLeituraAposLiberacao, admin.TabularInline):
     model = AmostraQualitativa
     extra = 0
     fields = ["identificacao", "resultado_referencia", "resultado_teste"]
@@ -55,6 +87,20 @@ class EstudoAdmin(admin.ModelAdmin):
                     "Corrida única mede apenas repetibilidade: a variação entre dias fica "
                     "invisível e o Erro Total sai otimista. Múltiplas corridas medem a "
                     "precisão intermediária, que é o desempenho real na rotina."
+                ),
+            },
+        ),
+        (
+            "Intervalos de referência",
+            {
+                "fields": [
+                    ("referencia_comparacao_inferior", "referencia_comparacao_superior"),
+                    ("referencia_teste_inferior", "referencia_teste_superior"),
+                ],
+                "description": (
+                    "Intervalo que cada metodologia imprime no laudo. É contra ele que a "
+                    "concordância clínica classifica cada resultado. Em branco, valem os do "
+                    "mensurando — e o método em teste usa o mesmo do método de comparação."
                 ),
             },
         ),
@@ -84,15 +130,23 @@ class EstudoAdmin(admin.ModelAdmin):
         return ["criado_em", "atualizado_em"]
 
 
-class ReplicaInline(admin.TabularInline):
+class ReplicaInline(SomenteLeituraAposLiberacao, admin.TabularInline):
     model = Replica
     extra = 0
     fields = ["corrida", "sequencia", "valor", "excluida", "justificativa_exclusao"]
 
+    def _liberado(self, obj) -> bool:
+        # Aqui o objeto do inline é o NivelEstudo; o estudo está um nível acima.
+        estudo = getattr(obj, "estudo", None)
+        return getattr(estudo, "situacao", None) == Estudo.LIBERADO
+
 
 @admin.register(NivelEstudo)
-class NivelEstudoAdmin(admin.ModelAdmin):
-    list_display = ["estudo", "numero", "controle", "concentracao_declarada", "total_replicas"]
+class NivelEstudoAdmin(SomenteLeituraAposLiberacao, admin.ModelAdmin):
+    list_display = [
+        "estudo", "numero", "controle", "concentracao_declarada",
+        "media_interlaboratorial", "total_replicas",
+    ]
     list_filter = ["estudo__laboratorio", "numero"]
     inlines = [ReplicaInline]
 

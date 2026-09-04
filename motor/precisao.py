@@ -2,15 +2,21 @@
 
 Procedimento de referência: CLSI EP15 (verificação de precisão pelo usuário).
 
-Dois resultados distintos, frequentemente confundidos:
+O que o estudo entrega, por nível de controle:
 
-- **Repetibilidade** (precisão intra-ensaio): dispersão entre réplicas medidas
-  nas mesmas condições, na mesma corrida. É o piso do erro aleatório.
-- **Precisão intermediária** (precisão intralaboratorial): dispersão que inclui
-  também a variação entre corridas/dias. É sempre maior ou igual à
-  repetibilidade, e é ela que representa o desempenho real do método na rotina.
+- **Média intracorrida, desvio padrão e CV de cada corrida** — a leitura do dia.
+- **CV agrupado** (pooled) das corridas — a dispersão que é comparada com o CV
+  máximo estabelecido para aquele nível.
+- **Bias absoluto e relativo** — a média global das réplicas contra a média do
+  material no estudo interlaboratorial (e-Lab, Unity, fleet). Sem essa média
+  informada, a exatidão não é avaliada: não há contra o que comparar.
 
-Um laboratório que reporta só a repetibilidade subestima o próprio erro.
+Uma ressalva que o módulo mantém à vista. O CV agrupado é dispersão **dentro**
+de corrida: ele não enxerga o que muda entre os dias — recalibração, troca de
+operador, frasco novo de reagente. A precisão intermediária, que inclui essa
+variação, continua sendo calculada e comparada com o mesmo limite. Quando as
+duas discordam, ``avisos`` diz — porque aí o método passa no papel e falha na
+rotina, e é justamente esse o caso em que ninguém quer ser avisado tarde.
 """
 
 from __future__ import annotations
@@ -31,6 +37,80 @@ def resumo_replicas(valores: Sequence[float]) -> dict:
         "cv": est.coeficiente_variacao(dados),
         "minimo": min(dados) if dados else None,
         "maximo": max(dados) if dados else None,
+    }
+
+
+def estatisticas_por_corrida(corridas: Sequence[Sequence[float]]) -> list[dict]:
+    """Média intracorrida, desvio padrão e CV de cada corrida, na ordem."""
+    saida = []
+    for numero, valores in enumerate(corridas, start=1):
+        resumo = resumo_replicas(valores)
+        resumo["corrida"] = numero
+        saida.append(resumo)
+    return saida
+
+
+def desvio_padrao_agrupado(corridas: Sequence[Sequence[float]]) -> float | None:
+    """Desvio padrão agrupado (pooled) das corridas.
+
+    Média ponderada das variâncias pelos graus de liberdade de cada corrida:
+    ``s² = Σ(nᵢ−1)·sᵢ² / Σ(nᵢ−1)``. Corridas com uma réplica só não têm
+    variância e apenas não entram na conta — não zeram o resultado.
+
+    Vale registrar que este número é a **repetibilidade**: é dispersão dentro de
+    corrida. O agrupamento junta as corridas para ganhar graus de liberdade, não
+    para incorporar a variação entre elas.
+    """
+    numerador = 0.0
+    graus = 0
+    for valores in corridas:
+        dados = est.limpar(valores)
+        desvio = est.desvio_padrao(dados)
+        if desvio is None:
+            continue
+        graus_da_corrida = len(dados) - 1
+        numerador += graus_da_corrida * desvio**2
+        graus += graus_da_corrida
+
+    if graus <= 0:
+        return None
+    return math.sqrt(numerador / graus)
+
+
+def bias_analitico(media_obtida: float | None, media_alvo: float | None) -> dict:
+    """Bias da média global das réplicas contra a média interlaboratorial.
+
+    ``media_alvo`` é a média do mesmo lote de controle no grupo de pares (e-Lab,
+    Unity, fleet). Sem ela, devolve ``avaliavel=False`` e nenhum número
+    inventado — a exatidão simplesmente não é avaliada.
+    """
+    if media_obtida is None or media_alvo is None:
+        return {
+            "avaliavel": False,
+            "media_obtida": media_obtida,
+            "media_alvo": media_alvo,
+            "absoluto": None,
+            "relativo_pct": None,
+            "motivo": "média do estudo interlaboratorial não informada",
+        }
+    if media_alvo == 0:
+        return {
+            "avaliavel": False,
+            "media_obtida": media_obtida,
+            "media_alvo": media_alvo,
+            "absoluto": media_obtida - media_alvo,
+            "relativo_pct": None,
+            "motivo": "média interlaboratorial igual a zero: bias relativo indefinido",
+        }
+
+    absoluto = media_obtida - media_alvo
+    return {
+        "avaliavel": True,
+        "media_obtida": media_obtida,
+        "media_alvo": media_alvo,
+        "absoluto": absoluto,
+        "relativo_pct": absoluto / media_alvo * 100,
+        "motivo": None,
     }
 
 
@@ -151,26 +231,24 @@ MINIMO_REPLICAS_POR_CORRIDA = 5
 # Em corrida única, o mínimo de réplicas para o CV ter estabilidade aceitável.
 MINIMO_REPLICAS_CORRIDA_UNICA = 10
 
-REPETIBILIDADE = "repetibilidade"
-INTERMEDIARIA = "precisão intermediária"
+CV_AGRUPADO = "CV agrupado das corridas"
+CV_DA_CORRIDA = "CV da corrida"
 
 
-def avaliar_precisao(corridas: Sequence[Sequence[float]], desenho: str) -> dict:
+def avaliar_precisao(
+    corridas: Sequence[Sequence[float]],
+    desenho: str,
+    media_interlaboratorial: float | None = None,
+) -> dict:
     """Executa o estudo de precisão conforme o desenho escolhido pelo laboratório.
 
-    A escolha do desenho não é uma preferência de conveniência: ela determina
-    **qual erro o estudo consegue enxergar**.
+    Devolve a estatística de cada corrida, o CV que será comparado com o limite
+    do nível, e o bias contra a média interlaboratorial quando ela for informada.
 
-    - **Múltiplas corridas** (5 dias × 5 réplicas): mede repetibilidade e
-      precisão intermediária. A precisão intermediária é a que representa o
-      desempenho na rotina, porque incorpora recalibrações, trocas de operador e
-      variação entre dias.
-    - **Corrida única** (≥10 réplicas no mesmo dia): mede apenas repetibilidade.
-      Tudo que varia entre dias fica invisível.
-
-    Consequência prática registrada em ``avisos``: um Erro Total calculado a
-    partir de repetibilidade **subestima** o erro real do método. O laboratório
-    pode escolher esse desenho, mas o relatório precisa dizer o que ele não viu.
+    A escolha do desenho não é preferência de conveniência: ela determina qual
+    erro o estudo consegue enxergar. Corrida única não observa nada do que varia
+    entre dias, e o Erro Total calculado a partir dela sai otimista. O aviso
+    correspondente vai em ``avisos``, para constar no relatório.
     """
     grupos = [est.limpar(c) for c in corridas]
     grupos = [g for g in grupos if g]
@@ -179,22 +257,28 @@ def avaliar_precisao(corridas: Sequence[Sequence[float]], desenho: str) -> dict:
     avisos: list[str] = []
 
     if desenho == DESENHO_CORRIDA_UNICA:
-        return _precisao_corrida_unica(grupos, todas, avisos)
-    if desenho == DESENHO_MULTIPLAS_CORRIDAS:
-        return _precisao_multiplas_corridas(grupos, todas, avisos)
+        base = _precisao_corrida_unica(grupos, todas, avisos)
+    elif desenho == DESENHO_MULTIPLAS_CORRIDAS:
+        base = _precisao_multiplas_corridas(grupos, todas, avisos)
+    else:
+        return {
+            "desenho": desenho,
+            "n_corridas": len(grupos),
+            "n_total": len(todas),
+            "media": est.media(todas),
+            "corridas": estatisticas_por_corrida(grupos),
+            "desvio_padrao": None,
+            "cv": None,
+            "cv_aplicavel": None,
+            "tipo_cv_aplicavel": None,
+            "cv_intermediaria": None,
+            "bias": bias_analitico(None, media_interlaboratorial),
+            "atende_minimo": False,
+            "avisos": [f"Desenho de estudo desconhecido: {desenho!r}."],
+        }
 
-    return {
-        "desenho": desenho,
-        "n_corridas": len(grupos),
-        "n_total": len(todas),
-        "media": est.media(todas),
-        "cv_repetibilidade": None,
-        "cv_intermediaria": None,
-        "cv_aplicavel": None,
-        "tipo_cv_aplicavel": None,
-        "atende_minimo": False,
-        "avisos": [f"Desenho de estudo desconhecido: {desenho!r}."],
-    }
+    base["bias"] = bias_analitico(base["media"], media_interlaboratorial)
+    return base
 
 
 def _precisao_corrida_unica(grupos, todas, avisos) -> dict:
@@ -226,17 +310,22 @@ def _precisao_corrida_unica(grupos, todas, avisos) -> dict:
         "n_corridas": 1 if todas else 0,
         "n_total": n,
         "media": resumo["media"],
-        "cv_repetibilidade": resumo["cv"],
-        "cv_intermediaria": None,
+        "corridas": estatisticas_por_corrida([todas] if todas else []),
+        "desvio_padrao": resumo["desvio_padrao"],
+        "cv": resumo["cv"],
         "cv_aplicavel": resumo["cv"],
-        "tipo_cv_aplicavel": REPETIBILIDADE if resumo["cv"] is not None else None,
+        "tipo_cv_aplicavel": CV_DA_CORRIDA if resumo["cv"] is not None else None,
+        "cv_intermediaria": None,
         "atende_minimo": atende,
         "avisos": avisos,
     }
 
 
 def _precisao_multiplas_corridas(grupos, todas, avisos) -> dict:
-    componentes = componentes_precisao(grupos)
+    por_corrida = estatisticas_por_corrida(grupos)
+    media_global = est.media(todas)
+    desvio_agrupado = desvio_padrao_agrupado(grupos)
+    cv_agrupado = _cv(desvio_agrupado, media_global)
 
     corridas_suficientes = len(grupos) >= MINIMO_CORRIDAS
     replicas_suficientes = all(len(g) >= MINIMO_REPLICAS_POR_CORRIDA for g in grupos)
@@ -251,21 +340,47 @@ def _precisao_multiplas_corridas(grupos, todas, avisos) -> dict:
             f"O desenho de referência do EP15 pede {MINIMO_REPLICAS_POR_CORRIDA} "
             "réplicas por corrida; ao menos uma corrida tem menos que isso."
         )
+
+    componentes = componentes_precisao(grupos)
     if componentes["observacao"]:
         avisos.append(componentes["observacao"])
 
-    cv_aplicavel = componentes["cv_intermediaria"]
-    tipo = INTERMEDIARIA if cv_aplicavel is not None else None
-
     return {
         "desenho": DESENHO_MULTIPLAS_CORRIDAS,
-        "n_corridas": componentes["n_corridas"],
-        "n_total": componentes["n_total"],
-        "media": componentes["media"],
-        "cv_repetibilidade": componentes["cv_repetibilidade"],
+        "n_corridas": len(grupos),
+        "n_total": len(todas),
+        "media": media_global,
+        "corridas": por_corrida,
+        "desvio_padrao": desvio_agrupado,
+        "cv": cv_agrupado,
+        "cv_aplicavel": cv_agrupado,
+        "tipo_cv_aplicavel": CV_AGRUPADO if cv_agrupado is not None else None,
         "cv_intermediaria": componentes["cv_intermediaria"],
-        "cv_aplicavel": cv_aplicavel,
-        "tipo_cv_aplicavel": tipo,
         "atende_minimo": corridas_suficientes and replicas_suficientes,
         "avisos": avisos,
     }
+
+
+def alerta_precisao_intermediaria(estatistica: dict, limite_pct: float | None) -> str | None:
+    """Avisa quando só a variação entre dias estoura o limite.
+
+    O CV agrupado é dispersão dentro de corrida. Se ele passa no limite e a
+    precisão intermediária não passa, o que reprovou o método foi exatamente o
+    que o CV agrupado não enxerga: a variação entre os dias. O método passaria no
+    relatório e falharia na rotina — o pior desfecho possível para uma validação,
+    e por isso este alerta existe.
+    """
+    if limite_pct is None:
+        return None
+    agrupado = estatistica.get("cv")
+    intermediaria = estatistica.get("cv_intermediaria")
+    if agrupado is None or intermediaria is None:
+        return None
+    if agrupado <= limite_pct < intermediaria:
+        return (
+            f"O CV agrupado ({agrupado:.2f}%) cabe no limite de {limite_pct:.2f}%, "
+            f"mas a precisão intermediária — que inclui a variação entre os dias — "
+            f"é de {intermediaria:.2f}%. O que passou no cálculo foi a dispersão "
+            "dentro da corrida; na rotina o método tende a ficar fora do limite."
+        )
+    return None

@@ -180,3 +180,67 @@ class TestConcordanciaClinica:
 
         assert resultado["concordancia_pct"] is None
         assert "inválido" in resultado["observacao"]
+
+
+class TestIntervalosPorMetodo:
+    """Cada método classifica contra o seu próprio intervalo de referência.
+
+    Quando o laboratório troca de metodologia costuma trocar também o intervalo
+    impresso no laudo. Medir os dois contra um intervalo só inventa discordância
+    que não chega ao paciente, ou esconde a que chega.
+    """
+
+    def test_intervalos_diferentes_podem_zerar_uma_discordancia(self):
+        # O método novo lê sistematicamente mais alto e tem intervalo mais alto
+        # na mesma medida: para o paciente, nada muda.
+        comparacao = [0.7, 1.0, 2.0]
+        teste = [0.9, 1.2, 2.2]
+
+        um_intervalo = conc.concordancia_clinica(comparacao, teste, 0.8, 1.8)
+        dois_intervalos = conc.concordancia_clinica(
+            comparacao, teste, 0.8, 1.8, limite_inferior_teste=1.0, limite_superior_teste=2.0
+        )
+
+        assert um_intervalo["concordancia_pct"] == pytest.approx(66.6666, rel=1e-3)
+        assert dois_intervalos["concordancia_pct"] == pytest.approx(100.0)
+
+    def test_sem_intervalo_do_teste_usa_o_da_comparacao(self):
+        # Quem manteve o intervalo antigo não precisa digitar duas vezes.
+        comparacao = [0.7, 1.0, 2.0]
+        teste = [0.75, 1.1, 1.9]
+
+        so_um = conc.concordancia_clinica(comparacao, teste, 0.8, 1.8)
+        repetido = conc.concordancia_clinica(
+            comparacao, teste, 0.8, 1.8, limite_inferior_teste=0.8, limite_superior_teste=1.8
+        )
+
+        assert so_um["concordancia_pct"] == repetido["concordancia_pct"]
+        assert so_um["intervalos_diferentes"] is False
+
+    def test_marca_quando_os_intervalos_sao_diferentes(self):
+        resultado = conc.concordancia_clinica(
+            [1.0], [1.0], 0.8, 1.8, limite_inferior_teste=1.0, limite_superior_teste=2.0
+        )
+
+        assert resultado["intervalos_diferentes"] is True
+        assert resultado["intervalo_comparacao"] == (0.8, 1.8)
+        assert resultado["intervalo_teste"] == (1.0, 2.0)
+
+    def test_intervalo_do_teste_invertido_recusa_avaliar(self):
+        resultado = conc.concordancia_clinica(
+            [1.0], [1.0], 0.8, 1.8, limite_inferior_teste=2.0, limite_superior_teste=1.0
+        )
+
+        assert resultado["concordancia_pct"] is None
+        assert "inválido" in resultado["observacao"]
+
+    def test_intervalo_do_teste_faltando_pela_metade_nao_avalia(self):
+        # Só o inferior informado. Completar o superior com o do método antigo
+        # produziria uma classificação contra um intervalo que não existe em
+        # nenhum dos dois laudos — e sem ninguém perceber.
+        resultado = conc.concordancia_clinica(
+            [1.0], [1.0], 0.8, 1.8, limite_inferior_teste=1.0, limite_superior_teste=None
+        )
+
+        assert resultado["concordancia_pct"] is None
+        assert "pela metade" in resultado["observacao"]

@@ -12,10 +12,14 @@ O que já está pronto e testado:
 |---|---|
 | Motor de cálculo (estatística) | ✅ Pronto — 90 testes automatizados |
 | Gráficos (regressão, Bland-Altman, Levey-Jennings) | ✅ Pronto — SVG sem dependências |
-| Modelos de dados e rastreabilidade | ✅ Pronto — 8 testes automatizados |
+| Modelos de dados e rastreabilidade | ✅ Pronto — 56 testes automatizados |
 | Cadastro de laboratórios e usuários | ✅ Pronto (painel administrativo) |
 | Controle dos módulos contratados | ✅ Pronto |
-| Telas para o laboratório usar | ⏳ A fazer |
+| Quadro de validações e fichas de analito | ✅ Pronto |
+| Tela de resultado com as faixas condensáveis | ✅ Pronto |
+| Calcular, congelar o veredito e liberar | ✅ Pronto |
+| Lançar réplicas e amostras fora do `/admin/` | ⏳ A fazer |
+| Assistente de nova validação | ⏳ A fazer |
 | Relatório em PDF | ⏳ A fazer |
 
 ## Os três módulos comercializáveis
@@ -77,26 +81,82 @@ medida silenciosamente.
 
 Precisa ter o Python 3.11 ou mais novo instalado.
 
-```bash
+Abra o **PowerShell** (no Windows: botão direito na pasta do projeto →
+"Abrir no Terminal") e rode, na ordem:
+
+```powershell
 # 1. Instalar as dependências
 pip install -r requirements-dev.txt
 
 # 2. Criar o banco de dados local
 python manage.py migrate
 
-# 3. Criar o seu usuário de administrador
-python manage.py createsuperuser
+# 3. Popular com dados de demonstração (opcional, mas recomendado na 1ª vez)
+python manage.py dados_exemplo
 
 # 4. Subir o sistema
 python manage.py runserver
 ```
 
-Depois abra <http://localhost:8000/admin/> no navegador e entre com o usuário
-que você criou.
+Depois abra <http://localhost:8000/> no navegador. **É esse endereço, sem
+`/admin/` no fim** — o `/admin/` mostra os cadastros, não o quadro.
+
+O comando `dados_exemplo` cria o usuário `analista.demo` com a senha
+`demonstracao-2026`, quatro validações em estados diferentes e as fichas de
+analito correspondentes. Ele se recusa a rodar com `DEBUG=False`, porque cria um
+usuário de senha conhecida.
+
+Para entrar com um usuário seu em vez do de demonstração:
+
+```powershell
+python manage.py createsuperuser
+```
 
 Nada disso precisa de banco de dados instalado: em desenvolvimento o sistema
 cria sozinho um arquivo `banco-local.sqlite3`. O PostgreSQL só entra em
 produção.
+
+## Como atualizar para a versão mais nova
+
+O código muda no GitHub. A cópia na sua máquina **não se atualiza sozinha** —
+baixar de novo é o que traz as mudanças.
+
+**1. Confira qual versão você tem.** Antes de baixar qualquer coisa, olhe se
+existe o arquivo `templates\base.html` dentro da pasta do projeto. Se não
+existir, sua cópia é antiga.
+
+**2. Baixe a versão nova.** Em <https://github.com/marcello2901/Valida-o-de-m-todos>,
+botão verde **Code** → **Download ZIP**. Confira antes, logo acima do botão, se
+a branch selecionada é a que você quer:
+
+- `main` — o que já foi revisado e aceito por você;
+- `claude/instalar-como-skill-leleth` — o que está em desenvolvimento, ainda
+  não aceito.
+
+**3. Extraia num lugar novo.** O Windows costuma criar
+`Valida-o-de-m-todos-main (1)` em vez de substituir a pasta antiga — e aí você
+roda a antiga sem perceber. Apague ou renomeie a pasta velha antes, ou confirme
+o caminho que aparece no PowerShell.
+
+**4. Rode os comandos de novo**, na pasta nova:
+
+```powershell
+pip install -r requirements-dev.txt
+python manage.py migrate
+python manage.py dados_exemplo
+python manage.py runserver
+```
+
+O `migrate` é obrigatório a cada atualização: é ele que ajusta o banco às
+mudanças na estrutura dos dados.
+
+### Sobre "dar commit"
+
+Você não precisa. Commit e envio para o GitHub são feitos por quem escreve o
+código. O que chega até você é o resultado: ou já em `main`, se você aceitou o
+pull request, ou na branch de desenvolvimento, se ainda não.
+
+O seu papel no fluxo é aceitar (ou não) o pull request, e depois baixar.
 
 ## Como rodar os testes
 

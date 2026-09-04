@@ -18,8 +18,16 @@ from catalogo.models import (
     Mensurando,
     SistemaAnalitico,
 )
-from contas.models import Assinatura, Laboratorio, Usuario
-from estudos.models import AmostraComparacao, Estudo, NivelEstudo, Replica
+from contas.models import Assinatura, Laboratorio, RegistroAuditoria, Usuario
+from estudos import servicos
+from estudos.models import (
+    VERSAO_MOTOR,
+    AmostraComparacao,
+    Estudo,
+    NivelEstudo,
+    Replica,
+    Veredito,
+)
 from motor import precisao
 
 
@@ -259,3 +267,354 @@ class TestQuadro(TestCase):
 
     def test_visitante_vai_para_o_login(self):
         self.assertEqual(self.client.get(self.url).status_code, 302)
+
+
+class TestCalcularELiberar(TestCase):
+    """As duas ações que movem o estudo pelo quadro.
+
+    São o ponto em que um cálculo vira registro de qualidade, então o que se
+    testa aqui é sobretudo o que elas *recusam* fazer.
+    """
+
+    def setUp(self):
+        self.laboratorio = montar_laboratorio("Lab A", "11.111.111/0001-11")
+        self.responsavel = Usuario.objects.create_user(
+            username="responsavel", password="senha-longa-de-teste",
+            laboratorio=self.laboratorio, funcao=Usuario.RESPONSAVEL,
+        )
+        self.analista = Usuario.objects.create_user(
+            username="analista", password="senha-longa-de-teste",
+            laboratorio=self.laboratorio, funcao=Usuario.ANALISTA,
+        )
+        self.estudo = montar_estudo(self.laboratorio, self.responsavel)
+        self.calcular_url = reverse("concluir_estudo", args=[self.estudo.pk])
+        self.liberar_url = reverse("liberar_estudo", args=[self.estudo.pk])
+
+    def test_calcular_congela_o_retrato_e_move_o_estudo(self):
+        self.client.force_login(self.analista)
+
+        self.client.post(self.calcular_url)
+
+        self.estudo.refresh_from_db()
+        self.assertEqual(self.estudo.situacao, Estudo.CONCLUIDO)
+        self.assertEqual(self.estudo.coluna_quadro(), Estudo.COLUNA_CALCULADO)
+        veredito = self.estudo.veredito
+        self.assertEqual(veredito.versao_motor, VERSAO_MOTOR)
+        self.assertIn("precisao", veredito.detalhamento)
+
+    def test_o_retrato_guarda_os_limites_vigentes_no_momento(self):
+        # É o que permite defender o número numa auditoria: a ficha pode mudar
+        # depois, mas o relatório mostra contra o que se decidiu na época.
+        self.client.force_login(self.analista)
+
+        self.client.post(self.calcular_url)
+
+        limites = self.estudo.veredito.detalhamento["especificacao"]
+        self.assertEqual(limites["erro_total"]["valor_pct"], 12.0)
+        self.assertEqual(limites["erro_total"]["referencia"], "ControlLab")
+
+    def test_calcular_registra_na_trilha_de_auditoria(self):
+        self.client.force_login(self.analista)
+
+        self.client.post(self.calcular_url)
+
+        registro = RegistroAuditoria.objects.get(acao="calculou o estudo")
+        self.assertEqual(registro.usuario, self.analista)
+        self.assertEqual(registro.laboratorio, self.laboratorio)
+
+    def test_estudo_sem_dado_nenhum_nao_calcula(self):
+        self.estudo.amostras_comparacao.all().delete()
+        Replica.objects.filter(nivel__estudo=self.estudo).delete()
+        self.client.force_login(self.analista)
+
+        self.client.post(self.calcular_url)
+
+        self.estudo.refresh_from_db()
+        self.assertEqual(self.estudo.situacao, Estudo.RASCUNHO)
+        self.assertFalse(hasattr(self.estudo, "veredito"))
+
+    def test_recalcular_substitui_o_retrato_anterior(self):
+        self.client.force_login(self.analista)
+        self.client.post(self.calcular_url)
+
+        self.client.post(self.calcular_url)
+
+        self.assertEqual(Veredito.objects.filter(estudo=self.estudo).count(), 1)
+        self.assertTrue(RegistroAuditoria.objects.filter(acao="recalculou o estudo").exists())
+
+    def test_get_nao_calcula(self):
+        # Mudança de estado por GET seria disparada por um simples recarregar.
+        self.client.force_login(self.analista)
+
+        resposta = self.client.get(self.calcular_url)
+
+        self.assertEqual(resposta.status_code, 405)
+        self.assertFalse(Veredito.objects.exists())
+
+    def test_laboratorio_alheio_nao_calcula(self):
+        outro = montar_laboratorio("Lab B", "22.222.222/0001-22")
+        intruso = Usuario.objects.create_user(
+            username="intruso", password="senha-longa-de-teste", laboratorio=outro
+        )
+        self.client.force_login(intruso)
+
+        self.assertEqual(self.client.post(self.calcular_url).status_code, 404)
+        self.assertFalse(Veredito.objects.exists())
+
+    def test_analista_nao_libera(self):
+        # Assinar relatório de validação é ato do responsável técnico.
+        self.client.force_login(self.analista)
+        self.client.post(self.calcular_url)
+
+        self.client.post(self.liberar_url)
+
+        self.estudo.refresh_from_db()
+        self.assertEqual(self.estudo.situacao, Estudo.CONCLUIDO)
+
+    def test_responsavel_libera_e_assina(self):
+        self.client.force_login(self.responsavel)
+        self.client.post(self.calcular_url)
+
+        self.client.post(self.liberar_url)
+
+        self.estudo.refresh_from_db()
+        self.assertEqual(self.estudo.situacao, Estudo.LIBERADO)
+        self.assertEqual(self.estudo.veredito.liberado_por, self.responsavel)
+        self.assertIsNotNone(self.estudo.veredito.liberado_em)
+
+    def test_nao_libera_sem_calcular_antes(self):
+        self.client.force_login(self.responsavel)
+
+        self.client.post(self.liberar_url)
+
+        self.estudo.refresh_from_db()
+        self.assertEqual(self.estudo.situacao, Estudo.RASCUNHO)
+
+    def test_estudo_liberado_nao_recalcula(self):
+        # Recalcular um relatório assinado descolaria o número do que se assinou.
+        self.client.force_login(self.responsavel)
+        self.client.post(self.calcular_url)
+        self.client.post(self.liberar_url)
+        congelado_em = self.estudo.veredito.calculado_em
+
+        self.client.post(self.calcular_url)
+
+        self.estudo.refresh_from_db()
+        self.assertEqual(self.estudo.situacao, Estudo.LIBERADO)
+        self.assertEqual(self.estudo.veredito.calculado_em, congelado_em)
+
+    def test_a_tela_avisa_quando_o_recalculo_diverge_do_assinado(self):
+        # A ficha do analito apertou depois da assinatura: a tela recalcula ao
+        # vivo, o relatório mantém o número assinado, e o usuário precisa ver
+        # que os dois deixaram de bater.
+        self.client.force_login(self.responsavel)
+        self.client.post(self.calcular_url)
+        self.assertEqual(self.estudo.veredito.resultado, Veredito.APROVADO)
+
+        ficha = self.estudo.especificacao
+        ficha.erro_total_maximo_pct = Decimal("1.00")
+        ficha.save()
+        ficha.limites_imprecisao.update(maximo_pct=Decimal("0.25"))
+
+        resposta = self.client.get(reverse("resultado_estudo", args=[self.estudo.pk]))
+
+        self.assertContains(resposta, "não bate com o veredito congelado")
+
+
+class TestGradeDeReplicas(TestCase):
+    """A grade de lançamento: 30 linhas por nível, salvas de uma vez."""
+
+    def setUp(self):
+        self.laboratorio = montar_laboratorio("Lab A", "11.111.111/0001-11")
+        self.usuario = Usuario.objects.create_user(
+            username="analista", password="senha-longa-de-teste",
+            laboratorio=self.laboratorio, funcao=Usuario.ANALISTA,
+        )
+        self.estudo = montar_estudo(self.laboratorio, self.usuario)
+        self.nivel = self.estudo.niveis.get(numero=1)
+        self.url = reverse("replicas_estudo", args=[self.estudo.pk])
+        self.client.force_login(self.usuario)
+
+    def test_a_grade_tem_trinta_linhas_por_nivel(self):
+        colunas = servicos.montar_grade(self.estudo)
+
+        self.assertEqual(len(colunas), 1)
+        self.assertEqual(len(colunas[0]["linhas"]), 30)
+
+    def test_as_linhas_se_agrupam_de_cinco_em_cinco_por_corrida(self):
+        # O desenho de referência do EP15: cada bloco de 5 é uma corrida.
+        linhas = servicos.montar_grade(self.estudo)[0]["linhas"]
+
+        self.assertEqual((linhas[0]["corrida"], linhas[0]["sequencia"]), (1, 1))
+        self.assertEqual((linhas[4]["corrida"], linhas[4]["sequencia"]), (1, 5))
+        self.assertEqual((linhas[5]["corrida"], linhas[5]["sequencia"]), (2, 1))
+        self.assertEqual((linhas[29]["corrida"], linhas[29]["sequencia"]), (6, 5))
+
+    def test_em_corrida_unica_todas_as_linhas_sao_a_mesma_corrida(self):
+        self.estudo.desenho_precisao = precisao.DESENHO_CORRIDA_UNICA
+        self.estudo.save(update_fields=["desenho_precisao"])
+
+        linhas = servicos.montar_grade(self.estudo)[0]["linhas"]
+
+        self.assertEqual({linha["corrida"] for linha in linhas}, {1})
+        self.assertEqual(linhas[29]["sequencia"], 30)
+
+    def test_a_grade_traz_as_replicas_ja_lancadas(self):
+        linhas = servicos.montar_grade(self.estudo)[0]["linhas"]
+
+        self.assertEqual(linhas[0]["valor"], Decimal("1.2850"))
+        self.assertIsNone(linhas[25]["valor"])
+
+    def test_salvar_grava_o_que_foi_digitado(self):
+        resposta = self.client.post(self.url, {f"nivel_{self.nivel.pk}_26": "1,33"})
+
+        self.assertEqual(resposta.status_code, 302)
+        gravada = Replica.objects.get(nivel=self.nivel, corrida=6, sequencia=1)
+        self.assertEqual(gravada.valor, Decimal("1.3300"))
+
+    def test_campo_em_branco_apaga_a_replica(self):
+        antes = Replica.objects.filter(nivel=self.nivel).count()
+
+        self.client.post(self.url, {f"nivel_{self.nivel.pk}_1": ""})
+
+        self.assertEqual(Replica.objects.filter(nivel=self.nivel).count(), antes - 1)
+
+    def test_valor_ilegivel_nao_grava_nada(self):
+        # Tudo ou nada: gravar metade de uma corrida e recusar o resto deixaria o
+        # laboratório com um estudo pela metade sem perceber.
+        antes = Replica.objects.filter(nivel=self.nivel).count()
+
+        resposta = self.client.post(
+            self.url,
+            {f"nivel_{self.nivel.pk}_26": "1,40", f"nivel_{self.nivel.pk}_27": "abc"},
+            follow=True,
+        )
+
+        self.assertEqual(Replica.objects.filter(nivel=self.nivel).count(), antes)
+        self.assertContains(resposta, "não é um número")
+
+    def test_replica_excluida_com_justificativa_nao_e_alterada(self):
+        alvo = Replica.objects.get(nivel=self.nivel, corrida=1, sequencia=1)
+        alvo.excluida = True
+        alvo.justificativa_exclusao = "bolha na cubeta"
+        alvo.save()
+
+        self.client.post(self.url, {})
+
+        alvo.refresh_from_db()
+        self.assertTrue(alvo.excluida)
+        self.assertEqual(alvo.justificativa_exclusao, "bolha na cubeta")
+
+    def test_a_media_interlaboratorial_e_gravada_junto(self):
+        self.client.post(
+            self.url,
+            {f"alvo_{self.nivel.pk}": "1,32", f"provedor_{self.nivel.pk}": NivelEstudo.ELAB},
+        )
+
+        self.nivel.refresh_from_db()
+        self.assertEqual(self.nivel.media_interlaboratorial, Decimal("1.3200"))
+        self.assertEqual(self.nivel.provedor_interlaboratorial, NivelEstudo.ELAB)
+
+    def test_acrescentar_nivel_cria_a_coluna(self):
+        outro = Controle.objects.create(
+            sistema=self.estudo.sistema_teste, mensurando=self.estudo.mensurando,
+            nivel=2, nome="Controle 2", lote="L2",
+            validade=date(2027, 1, 1), valor_alvo=Decimal("3.0"),
+        )
+
+        self.client.post(self.url, {"acao": "adicionar_nivel", "controle": outro.pk})
+
+        self.assertEqual(self.estudo.niveis.count(), 2)
+        self.assertEqual(self.estudo.niveis.get(numero=2).controle, outro)
+
+    def test_nao_oferece_controle_de_outro_analito(self):
+        # Mesmo equipamento, analito diferente: não pode virar coluna deste estudo.
+        outro_analito = Mensurando.objects.create(
+            laboratorio=self.laboratorio, nome="HbA1c",
+            unidade_medida="%", material_biologico="sangue total",
+        )
+        alheio = Controle.objects.create(
+            sistema=self.estudo.sistema_teste, mensurando=outro_analito,
+            nivel=1, nome="Controle HbA1c", lote="LX",
+            validade=date(2027, 1, 1), valor_alvo=Decimal("5.6"),
+        )
+
+        resposta = self.client.get(self.url)
+        self.assertNotContains(resposta, "Controle HbA1c")
+
+        self.client.post(self.url, {"acao": "adicionar_nivel", "controle": alheio.pk})
+        self.assertEqual(self.estudo.niveis.count(), 1)
+
+    def test_estudo_liberado_nao_aceita_lancamento(self):
+        self.estudo.situacao = Estudo.LIBERADO
+        self.estudo.save(update_fields=["situacao"])
+
+        resposta = self.client.get(self.url)
+
+        self.assertEqual(resposta.status_code, 302)
+
+    def test_laboratorio_alheio_nao_abre_a_grade(self):
+        outro = montar_laboratorio("Lab B", "22.222.222/0001-22")
+        intruso = Usuario.objects.create_user(
+            username="intruso", password="senha-longa-de-teste", laboratorio=outro
+        )
+        self.client.force_login(intruso)
+
+        self.assertEqual(self.client.get(self.url).status_code, 404)
+
+
+class TestIntervalosDeReferenciaPorMetodo(TestCase):
+    """Cada metodologia classifica contra o intervalo que ela imprime no laudo."""
+
+    def setUp(self):
+        self.laboratorio = montar_laboratorio("Lab A", "11.111.111/0001-11")
+        self.usuario = Usuario.objects.create_user(
+            username="analista", password="senha-longa-de-teste", laboratorio=self.laboratorio
+        )
+        self.estudo = montar_estudo(self.laboratorio, self.usuario)
+
+    def test_sem_intervalo_proprio_o_estudo_herda_o_do_mensurando(self):
+        self.assertEqual(
+            self.estudo.intervalo_de_comparacao(), (Decimal("0.8"), Decimal("1.8"))
+        )
+        self.assertEqual(self.estudo.intervalo_de_teste(), (None, None))
+
+    def test_o_intervalo_do_estudo_prevalece_sobre_o_do_mensurando(self):
+        self.estudo.referencia_comparacao_inferior = Decimal("0.9")
+        self.estudo.referencia_comparacao_superior = Decimal("1.7")
+        self.estudo.save()
+
+        self.assertEqual(
+            self.estudo.intervalo_de_comparacao(), (Decimal("0.9"), Decimal("1.7"))
+        )
+
+    def test_intervalos_diferentes_chegam_ao_calculo(self):
+        self.estudo.referencia_teste_inferior = Decimal("0.85")
+        self.estudo.referencia_teste_superior = Decimal("1.86")
+        self.estudo.save()
+
+        clinica = servicos.calcular(self.estudo)["comparabilidade"]["clinica"]
+
+        self.assertTrue(clinica["intervalos_diferentes"])
+        self.assertEqual(clinica["intervalo_teste"], (0.85, 1.86))
+
+    def test_a_tela_mostra_os_dois_intervalos_usados(self):
+        self.estudo.referencia_teste_inferior = Decimal("0.85")
+        self.estudo.referencia_teste_superior = Decimal("1.86")
+        self.estudo.save()
+        self.client.force_login(self.usuario)
+
+        resposta = self.client.get(reverse("resultado_estudo", args=[self.estudo.pk]))
+
+        self.assertContains(resposta, "0,85")
+        self.assertContains(resposta, "1,86")
+
+    def test_a_tela_traz_pearson_e_a_regressao_simples(self):
+        self.client.force_login(self.usuario)
+
+        resposta = self.client.get(reverse("resultado_estudo", args=[self.estudo.pk]))
+
+        self.assertContains(resposta, "Correlação de Pearson")
+        self.assertContains(resposta, "Regressão linear simples")
+        self.assertContains(resposta, "regressão linear simples")
+        self.assertContains(resposta, "identidade (y = x)")

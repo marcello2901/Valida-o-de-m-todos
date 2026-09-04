@@ -1,0 +1,245 @@
+{% extends "base.html" %}
+
+{% block titulo %}Configurações{% endblock %}
+
+{% block estilo %}
+<style>
+  .area { flex-grow: 1; padding: 18px 24px 28px; }
+  .secao { margin-bottom: 26px; }
+  .secao > header { display: flex; align-items: baseline; gap: 10px; margin-bottom: 11px; }
+  .secao h2 { font-size: 14px; font-weight: 600; margin: 0; }
+  .secao .conta { font-size: 11px; color: var(--tinta-3); background: var(--trilho);
+                  border-radius: 20px; padding: 1px 8px; }
+  .secao .explica { font-size: 12px; color: var(--tinta-3); margin: 0; }
+
+  .grade { display: grid; grid-template-columns: repeat(auto-fill, minmax(276px, 1fr)); gap: 13px; align-items: start; }
+  .ficha { padding: 14px 15px; display: block; color: var(--tinta); transition: border-color .13s, box-shadow .13s; }
+  a.ficha:hover { border-color: var(--borda); box-shadow: 0 3px 12px rgba(11,11,11,.08); color: var(--tinta); }
+
+  .topo { display: flex; align-items: center; gap: 11px; }
+  .sigla {
+    display: flex; align-items: center; justify-content: center; width: 38px; height: 38px;
+    border-radius: 10px; background: var(--leito); font-size: 13px; font-weight: 700; flex-shrink: 0;
+    font-family: "Instrument Sans", system-ui, sans-serif;
+  }
+  .titulo { font-size: 15px; font-weight: 600; font-family: "Instrument Sans", system-ui, sans-serif; }
+  .abaixo { font-size: 11.5px; color: var(--tinta-3); }
+
+  .pares { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 13px; }
+  .pares dt { font-size: 9.5px; color: var(--tinta-3); text-transform: uppercase; letter-spacing: .05em; }
+  .pares dd { margin: 1px 0 0; font-size: 13px; font-variant-numeric: tabular-nums; }
+
+  .lista { margin: 12px 0 0; padding: 10px 0 0; border-top: 1px solid var(--grade); }
+  .item { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 12px; }
+  .item .rotulo { color: var(--tinta-3); width: 62px; flex-shrink: 0; font-size: 11px; }
+  .item .nome { flex-grow: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mais { font-size: 11.5px; color: var(--tinta-3); margin-top: 7px; }
+  .pe { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--grade);
+        display: flex; align-items: center; gap: 8px; }
+</style>
+{% endblock %}
+
+{% block corpo %}
+<div class="barra">
+  <div>
+    <h1 class="display">Configurações</h1>
+    <p class="sub">O que sustenta as validações: equipe, equipamentos, insumos e analitos.</p>
+  </div>
+  <div class="cresce"></div>
+  <a href="/admin/" class="botao">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 9h5M7 13h3"/><circle cx="17" cy="12" r="2"/></svg>
+    Abrir cadastros
+  </a>
+</div>
+
+<div class="area">
+  {% if not laboratorio %}
+  <p class="vazio">Seu usuário não está vinculado a um laboratório. Peça ao gestor para fazer o vínculo.</p>
+  {% else %}
+
+  <section class="secao">
+    <header>
+      <h2 class="display">Laboratório e equipe</h2>
+      <p class="explica">Quem assina o relatório e quais módulos estão contratados.</p>
+    </header>
+    <div class="grade">
+
+      <a class="cartao ficha" href="/admin/contas/laboratorio/{{ laboratorio.pk }}/change/">
+        <div class="topo">
+          <span class="sigla">{{ laboratorio.razao_social|slice:":2"|upper }}</span>
+          <div style="min-width: 0">
+            <div class="titulo">{{ laboratorio.nome_fantasia|default:laboratorio.razao_social }}</div>
+            <div class="abaixo">CNPJ {{ laboratorio.cnpj }}</div>
+          </div>
+        </div>
+        <dl class="pares">
+          <div><dt>Cidade</dt><dd>{{ laboratorio.cidade|default:"—" }}{% if laboratorio.uf %}/{{ laboratorio.uf }}{% endif %}</dd></div>
+          <div><dt>Responsável técnico</dt><dd>{{ laboratorio.responsavel_tecnico|default:"—" }}</dd></div>
+        </dl>
+      </a>
+
+      <div class="cartao ficha">
+        <div class="topo">
+          <span class="sigla">
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20v-1.5A4.5 4.5 0 0 1 8.5 14h3A4.5 4.5 0 0 1 16 18.5V20"/><circle cx="10" cy="8" r="3.5"/><path d="M17.5 13.5A3.6 3.6 0 0 1 21 17v3"/></svg>
+          </span>
+          <div style="min-width: 0">
+            <div class="titulo">Módulos contratados</div>
+            <div class="abaixo">Define o que cada estudo consegue avaliar</div>
+          </div>
+        </div>
+        <div class="lista">
+          {% for assinatura in assinaturas %}
+          <div class="item">
+            <span class="nome">{{ assinatura.modulo_curto }}</span>
+            {% if assinatura.vigente %}
+              <span class="estado estado--APROVADO">vigente</span>
+            {% else %}
+              <span class="estado estado--REPROVADO">fora de vigência</span>
+            {% endif %}
+          </div>
+          {% empty %}
+          <p class="nota">Nenhum módulo contratado — os estudos ficam sem veredito.</p>
+          {% endfor %}
+        </div>
+      </div>
+
+      {% for pessoa in equipe %}
+      <a class="cartao ficha" href="/admin/contas/usuario/{{ pessoa.pk }}/change/">
+        <div class="topo">
+          <span class="sigla">{{ pessoa.username|slice:":2"|upper }}</span>
+          <div style="min-width: 0">
+            <div class="titulo">{{ pessoa.get_full_name|default:pessoa.username }}</div>
+            <div class="abaixo">{{ pessoa.username }}</div>
+          </div>
+        </div>
+        <div class="pe">
+          {% if pessoa.pode_assinar_relatorio %}
+            <span class="selo selo--acento">Responsável técnico</span>
+          {% else %}
+            <span class="selo selo--neutro">{{ pessoa.get_funcao_display|truncatewords:1 }}</span>
+          {% endif %}
+          <div class="cresce"></div>
+          <span class="nota">{{ pessoa.conselho_profissional|default:"" }}</span>
+        </div>
+      </a>
+      {% endfor %}
+
+    </div>
+  </section>
+
+  <section class="secao">
+    <header>
+      <h2 class="display">Sistemas analíticos</h2>
+      <span class="conta num">{{ sistemas|length }}</span>
+      <p class="explica">
+        {{ totais.reagentes }} reagentes &middot; {{ totais.calibradores }} calibradores &middot;
+        {{ totais.controles }} controles
+      </p>
+    </header>
+    <div class="grade">
+      {% for bloco in sistemas %}
+      <a class="cartao ficha" href="/admin/catalogo/sistemaanalitico/{{ bloco.sistema.pk }}/change/">
+        <div class="topo">
+          <span class="sigla">
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2.5"/><path d="M8 9h8M8 13h5"/><circle cx="16" cy="15" r="1.4"/></svg>
+          </span>
+          <div style="min-width: 0">
+            <div class="titulo">{{ bloco.sistema.equipamento }}</div>
+            <div class="abaixo">{{ bloco.sistema.numero_serie }} &middot; {{ bloco.sistema.metodologia }}</div>
+          </div>
+        </div>
+
+        <div class="pares">
+          <div><dt>Papel</dt><dd>{{ bloco.sistema.papel_curto }}</dd></div>
+          <div><dt>Faixa analítica</dt>
+            <dd>
+              {% if bloco.sistema.intervalo_analitico_minimo is not None %}
+                {{ bloco.sistema.intervalo_analitico_minimo|floatformat:2 }} – {{ bloco.sistema.intervalo_analitico_maximo|floatformat:2 }}
+              {% else %}—{% endif %}
+            </dd>
+          </div>
+          <div><dt>Validações</dt><dd class="num">{{ bloco.estudos }}</dd></div>
+        </div>
+
+        {% comment %}
+          Os insumos vêm ordenados por proximidade do vencimento: o que está
+          prestes a travar uma validação aparece primeiro, sem precisar procurar.
+        {% endcomment %}
+        {% if bloco.insumos %}
+        <div class="lista">
+          {% for item in bloco.insumos|slice:":4" %}
+          <div class="item">
+            <span class="rotulo">{{ item.tipo }}</span>
+            <span class="nome" title="{{ item.insumo.nome }} — lote {{ item.insumo.lote }}">{{ item.insumo.nome }}</span>
+            <span class="estado estado--{{ item.situacao.chave }}" style="border: none; padding: 0">{{ item.situacao.texto }}</span>
+          </div>
+          {% endfor %}
+          {% if bloco.insumos|length > 4 %}
+          <p class="mais">e mais {{ bloco.insumos|length|add:"-4" }} insumo(s).</p>
+          {% endif %}
+        </div>
+        {% else %}
+        <p class="nota" style="margin-top: 12px">Nenhum insumo cadastrado neste sistema.</p>
+        {% endif %}
+
+        {% if bloco.vencidos or bloco.vencendo %}
+        <div class="pe">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--atencao-tinta)" stroke-width="2" stroke-linecap="round" style="flex-shrink: 0"><path d="M12 8v5M12 16.5v.01"/><circle cx="12" cy="12" r="9"/></svg>
+          <span style="font-size: 11.5px; color: var(--atencao-tinta)">
+            {% if bloco.vencidos %}{{ bloco.vencidos }} vencido(s){% endif %}
+            {% if bloco.vencidos and bloco.vencendo %} &middot; {% endif %}
+            {% if bloco.vencendo %}{{ bloco.vencendo }} vencendo{% endif %}
+          </span>
+        </div>
+        {% endif %}
+      </a>
+      {% empty %}
+      <p class="vazio">Nenhum sistema analítico cadastrado.</p>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="secao">
+    <header>
+      <h2 class="display">Mensurandos</h2>
+      <span class="conta num">{{ analitos|length }}</span>
+      <p class="explica">Unidade, material biológico e intervalo de referência de cada analito.</p>
+    </header>
+    <div class="grade">
+      {% for bloco in analitos %}
+      <a class="cartao ficha" href="/admin/catalogo/mensurando/{{ bloco.mensurando.pk }}/change/">
+        <div class="topo">
+          <span class="sigla">{{ bloco.sigla }}</span>
+          <div style="min-width: 0">
+            <div class="titulo">{{ bloco.mensurando.nome }}</div>
+            <div class="abaixo">{{ bloco.mensurando.unidade_medida }} &middot; {{ bloco.mensurando.material_biologico }}</div>
+          </div>
+        </div>
+        <div class="pe">
+          {% if bloco.tem_intervalo %}
+            <span class="selo selo--neutro">
+              Referência {{ bloco.mensurando.referencia_inferior|floatformat:2 }} –
+              {{ bloco.mensurando.referencia_superior|floatformat:2 }}
+            </span>
+          {% else %}
+            {% comment %}
+              Sem intervalo de referência a concordância clínica não é calculada.
+              É melhor dizer isso aqui do que deixar a medida sumir do relatório.
+            {% endcomment %}
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--atencao-tinta)" stroke-width="2" stroke-linecap="round" style="flex-shrink: 0"><path d="M12 8v5M12 16.5v.01"/><circle cx="12" cy="12" r="9"/></svg>
+            <span style="font-size: 11.5px; color: var(--atencao-tinta)">
+              Sem intervalo de referência — a concordância clínica não é calculada
+            </span>
+          {% endif %}
+        </div>
+      </a>
+      {% empty %}
+      <p class="vazio">Nenhum mensurando cadastrado.</p>
+      {% endfor %}
+    </div>
+  </section>
+
+  {% endif %}
+</div>
+{% endblock %}
