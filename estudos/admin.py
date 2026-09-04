@@ -51,7 +51,10 @@ class SomenteLeituraAposLiberacao:
 class NivelEstudoInline(SomenteLeituraAposLiberacao, admin.TabularInline):
     model = NivelEstudo
     extra = 1
-    fields = ["numero", "controle", "concentracao_declarada"]
+    fields = [
+        "numero", "controle", "concentracao_declarada",
+        "media_interlaboratorial", "provedor_interlaboratorial",
+    ]
 
 
 class AmostraComparacaoInline(SomenteLeituraAposLiberacao, admin.TabularInline):
@@ -84,6 +87,20 @@ class EstudoAdmin(admin.ModelAdmin):
                     "Corrida única mede apenas repetibilidade: a variação entre dias fica "
                     "invisível e o Erro Total sai otimista. Múltiplas corridas medem a "
                     "precisão intermediária, que é o desempenho real na rotina."
+                ),
+            },
+        ),
+        (
+            "Intervalos de referência",
+            {
+                "fields": [
+                    ("referencia_comparacao_inferior", "referencia_comparacao_superior"),
+                    ("referencia_teste_inferior", "referencia_teste_superior"),
+                ],
+                "description": (
+                    "Intervalo que cada metodologia imprime no laudo. É contra ele que a "
+                    "concordância clínica classifica cada resultado. Em branco, valem os do "
+                    "mensurando — e o método em teste usa o mesmo do método de comparação."
                 ),
             },
         ),
@@ -126,7 +143,10 @@ class ReplicaInline(SomenteLeituraAposLiberacao, admin.TabularInline):
 
 @admin.register(NivelEstudo)
 class NivelEstudoAdmin(SomenteLeituraAposLiberacao, admin.ModelAdmin):
-    list_display = ["estudo", "numero", "controle", "concentracao_declarada", "total_replicas"]
+    list_display = [
+        "estudo", "numero", "controle", "concentracao_declarada",
+        "media_interlaboratorial", "total_replicas",
+    ]
     list_filter = ["estudo__laboratorio", "numero"]
     inlines = [ReplicaInline]
 

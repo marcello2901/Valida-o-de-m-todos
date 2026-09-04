@@ -8,6 +8,7 @@ import math
 
 import pytest
 
+from motor import estatistica as est
 from motor import precisao
 
 
@@ -115,3 +116,88 @@ class TestComponentesPrecisao:
 
         assert resultado["cv_repetibilidade"] == pytest.approx(math.sqrt(2) / 13 * 100)
         assert resultado["cv_intermediaria"] == pytest.approx(3.0 / 13 * 100)
+
+
+class TestBiasContraOInterlaboratorial:
+    """O bias analítico do estudo de precisão vem do grupo de pares.
+
+    A média do mesmo lote de controle no e-Lab, Unity ou fleet é o alvo. Sem ela
+    não há exatidão a avaliar — e o módulo diz isso em vez de inventar um alvo.
+    """
+
+    def test_media_acima_do_alvo_da_bias_positivo(self):
+        resultado = precisao.bias_analitico(105.0, 100.0)
+
+        assert resultado["avaliavel"] is True
+        assert resultado["absoluto"] == pytest.approx(5.0)
+        assert resultado["relativo_pct"] == pytest.approx(5.0)
+
+    def test_media_abaixo_do_alvo_da_bias_negativo(self):
+        resultado = precisao.bias_analitico(96.0, 100.0)
+
+        assert resultado["absoluto"] == pytest.approx(-4.0)
+        assert resultado["relativo_pct"] == pytest.approx(-4.0)
+
+    def test_o_relativo_usa_o_alvo_como_denominador(self):
+        # 0,6 sobre um alvo de 1,2 é 50% — não os 40% que sairiam se o
+        # denominador fosse a média obtida.
+        resultado = precisao.bias_analitico(1.8, 1.2)
+
+        assert resultado["relativo_pct"] == pytest.approx(50.0)
+
+    def test_sem_media_interlaboratorial_a_exatidao_nao_e_avaliada(self):
+        resultado = precisao.bias_analitico(105.0, None)
+
+        assert resultado["avaliavel"] is False
+        assert resultado["absoluto"] is None
+        assert resultado["relativo_pct"] is None
+        assert "não informada" in resultado["motivo"]
+
+    def test_alvo_zero_nao_produz_divisao_por_zero(self):
+        resultado = precisao.bias_analitico(2.0, 0.0)
+
+        assert resultado["avaliavel"] is False
+        assert resultado["absoluto"] == pytest.approx(2.0)
+        assert resultado["relativo_pct"] is None
+
+    def test_o_estudo_completo_devolve_o_bias_junto(self):
+        corridas = [[10.0, 10.2, 9.8], [10.1, 10.3, 9.9]]
+
+        resultado = precisao.avaliar_precisao(
+            corridas, precisao.DESENHO_MULTIPLAS_CORRIDAS, media_interlaboratorial=10.0
+        )
+
+        assert resultado["bias"]["avaliavel"] is True
+        assert resultado["bias"]["media_alvo"] == 10.0
+        assert resultado["bias"]["absoluto"] == pytest.approx(0.05)
+
+
+class TestDesvioPadraoAgrupado:
+    def test_corridas_iguais_dao_o_desvio_da_corrida(self):
+        # Duas corridas idênticas: o agrupado é o desvio de qualquer uma delas.
+        uma = [10.0, 10.2, 9.8, 10.1, 9.9]
+
+        agrupado = precisao.desvio_padrao_agrupado([uma, list(uma)])
+
+        assert agrupado == pytest.approx(est.desvio_padrao(uma))
+
+    def test_deslocamento_entre_corridas_nao_entra_na_conta(self):
+        # A segunda corrida está 5 unidades acima, com a mesma dispersão interna.
+        # O agrupado ignora o degrau: ele mede dentro de corrida, não entre.
+        uma = [10.0, 10.2, 9.8, 10.1, 9.9]
+        outra = [valor + 5 for valor in uma]
+
+        agrupado = precisao.desvio_padrao_agrupado([uma, outra])
+
+        assert agrupado == pytest.approx(est.desvio_padrao(uma))
+
+    def test_corrida_de_uma_replica_so_nao_zera_o_resultado(self):
+        uma = [10.0, 10.2, 9.8, 10.1, 9.9]
+
+        agrupado = precisao.desvio_padrao_agrupado([uma, [10.0]])
+
+        assert agrupado == pytest.approx(est.desvio_padrao(uma))
+
+    def test_sem_dado_suficiente_devolve_none(self):
+        assert precisao.desvio_padrao_agrupado([[10.0], [11.0]]) is None
+        assert precisao.desvio_padrao_agrupado([]) is None

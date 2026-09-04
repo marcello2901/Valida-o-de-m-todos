@@ -1,0 +1,168 @@
+{% extends "base.html" %}
+
+{% block titulo %}Lançar réplicas — {{ estudo.mensurando.nome }}{% endblock %}
+
+{% block estilo %}
+<style>
+  .area { flex-grow: 1; padding: 18px 24px; }
+  .colunas { display: flex; gap: 14px; align-items: start; flex-wrap: wrap; }
+  .coluna { flex: 1 1 250px; min-width: 236px; max-width: 340px; padding: 0; overflow: hidden; }
+
+  .cabeca { padding: 13px 14px 11px; border-bottom: 1px solid var(--grade); background: var(--faixa); }
+  .cabeca h2 { font-size: 14px; font-weight: 600; margin: 0; }
+  .cabeca .material { font-size: 11.5px; color: var(--tinta-3); margin: 2px 0 0; }
+  .alvo { margin-top: 10px; }
+  .alvo label { display: block; font-size: 10px; color: var(--tinta-3);
+                text-transform: uppercase; letter-spacing: .05em; font-weight: 600; margin-bottom: 3px; }
+  .alvo .par { display: flex; gap: 5px; }
+
+  input[type="text"], input[type="number"], select {
+    font: inherit; font-size: 13px; color: var(--tinta); background: var(--superficie);
+    border: 1px solid var(--linha); border-radius: 6px; padding: 5px 8px; width: 100%;
+    font-variant-numeric: tabular-nums;
+  }
+  input:focus, select:focus { outline: 2px solid var(--acento); outline-offset: -1px; border-color: var(--acento); }
+  input:disabled { background: var(--chip); color: var(--tinta-3); }
+
+  .linhas { padding: 6px 10px 12px; }
+  .linha { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
+  .ordem { width: 20px; flex-shrink: 0; font-size: 10.5px; color: var(--tinta-3);
+           text-align: right; font-variant-numeric: tabular-nums; }
+  .corrida {
+    display: flex; align-items: center; gap: 7px; margin: 9px 0 3px;
+    font-size: 10px; font-weight: 700; color: var(--tinta-3);
+    text-transform: uppercase; letter-spacing: .06em;
+  }
+  .corrida::after { content: ""; flex-grow: 1; height: 1px; background: var(--grade); }
+  .corrida:first-child { margin-top: 2px; }
+  .travada { font-size: 10.5px; color: var(--atencao-tinta); }
+
+  .nova { flex: 0 0 236px; padding: 14px; }
+  .nova h2 { font-size: 13px; font-weight: 600; margin: 0 0 4px; }
+  .nova .campo { margin-top: 10px; }
+  .nova label { display: block; font-size: 10px; color: var(--tinta-3);
+                text-transform: uppercase; letter-spacing: .05em; font-weight: 600; margin-bottom: 3px; }
+
+  .rodape-fixo {
+    position: sticky; bottom: 0; margin-top: 16px; padding: 12px 0 4px;
+    background: linear-gradient(to top, var(--plano) 72%, transparent);
+    display: flex; align-items: center; gap: 12px;
+  }
+</style>
+{% endblock %}
+
+{% block corpo %}
+<div class="barra">
+  <a href="{% url 'resultado_estudo' estudo.pk %}" class="botao" style="width: 34px; padding: 0; justify-content: center" title="Voltar ao resultado">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 6l-6 6 6 6"/></svg>
+  </a>
+  <div>
+    <h1 class="display">Lançar réplicas de controle</h1>
+    <p class="sub">
+      {{ estudo.mensurando.nome }} &middot; {{ estudo.desenho_curto }} &middot;
+      {{ andamento.precisao_feita }} de {{ andamento.precisao_total }} lançadas
+    </p>
+  </div>
+  <div class="cresce"></div>
+  <span class="selo selo--neutro">{{ estudo.mensurando.unidade_medida }}</span>
+</div>
+
+<div class="area">
+  <form method="post">
+    {% csrf_token %}
+    <div class="colunas">
+
+      {% for coluna in colunas %}
+      <section class="cartao coluna">
+        <div class="cabeca">
+          <h2 class="display">Nível {{ coluna.nivel.numero }}</h2>
+          <p class="material">{{ coluna.nivel.controle.nome }} &middot; lote {{ coluna.nivel.controle.lote }}</p>
+          {% comment %}
+            A média do grupo de pares fica aqui, e não noutra tela, porque é o
+            alvo do bias deste nível. Em branco, a exatidão não é avaliada.
+          {% endcomment %}
+          <div class="alvo">
+            <label for="alvo_{{ coluna.nivel.pk }}">Média interlaboratorial</label>
+            <div class="par">
+              <input type="text" inputmode="decimal" id="alvo_{{ coluna.nivel.pk }}"
+                     name="alvo_{{ coluna.nivel.pk }}"
+                     value="{{ coluna.nivel.media_interlaboratorial|default_if_none:'' }}"
+                     placeholder="sem alvo">
+              <select name="provedor_{{ coluna.nivel.pk }}" style="width: 108px" aria-label="Programa interlaboratorial do nível {{ coluna.nivel.numero }}">
+                <option value="">—</option>
+                {% for valor, rotulo in provedores %}
+                <option value="{{ valor }}" {% if coluna.nivel.provedor_interlaboratorial == valor %}selected{% endif %}>{{ valor }}</option>
+                {% endfor %}
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="linhas">
+          {% for linha in coluna.linhas %}
+            {% if linha.abre_corrida and estudo.desenho_precisao != "corrida_unica" %}
+            <div class="corrida">Corrida {{ linha.corrida }}</div>
+            {% endif %}
+            <div class="linha">
+              <span class="ordem">{{ linha.posicao }}</span>
+              {% if linha.travada %}
+                <input type="text" value="{{ linha.valor }}" disabled
+                       aria-label="Réplica {{ linha.posicao }} do nível {{ coluna.nivel.numero }}, excluída do cálculo">
+                <span class="travada" title="{{ linha.justificativa }}">excluída</span>
+              {% else %}
+                <input type="text" inputmode="decimal" name="{{ linha.campo }}"
+                       value="{{ linha.valor|default_if_none:'' }}"
+                       aria-label="Réplica {{ linha.posicao }} do nível {{ coluna.nivel.numero }}">
+              {% endif %}
+            </div>
+          {% endfor %}
+        </div>
+      </section>
+      {% empty %}
+      <p class="vazio">Este estudo ainda não tem nível de controle. Acrescente um ao lado.</p>
+      {% endfor %}
+
+      {% comment %}
+        A terceira coluna aparece quando o laboratório usa um nível 3. Fica aqui
+        e não no painel administrativo para a grade não exigir sair da tela.
+      {% endcomment %}
+      {% if controles_disponiveis %}
+      <section class="cartao nova">
+        <h2 class="display">Acrescentar nível</h2>
+        <p class="nota">Cria mais uma coluna de 30 réplicas.</p>
+        <div class="campo">
+          <label for="controle">Material de controle</label>
+          <select name="controle" id="controle">
+            {% for controle in controles_disponiveis %}
+            <option value="{{ controle.pk }}">Nível {{ controle.nivel }} &middot; {{ controle.nome }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="campo">
+          <label for="media_nova">Média interlaboratorial</label>
+          <input type="text" inputmode="decimal" name="media_interlaboratorial" id="media_nova" placeholder="opcional">
+        </div>
+        <button type="submit" name="acao" value="adicionar_nivel" class="botao" style="margin-top: 12px; width: 100%; justify-content: center">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          Adicionar coluna
+        </button>
+      </section>
+      {% endif %}
+
+    </div>
+
+    {% if colunas %}
+    <div class="rodape-fixo">
+      <button type="submit" class="botao botao--primario">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7"/></svg>
+        Salvar réplicas
+      </button>
+      <span class="nota">
+        Campo em branco apaga a réplica daquela posição. Réplicas excluídas com
+        justificativa ficam travadas e não são alteradas aqui.
+      </span>
+    </div>
+    {% endif %}
+  </form>
+</div>
+{% endblock %}

@@ -8,7 +8,10 @@ assinaturas separadas.
 from datetime import timedelta
 
 from django.test import TestCase
+from django.urls import reverse
 from django.utils import timezone
+
+from catalogo.models import Mensurando, Reagente, SistemaAnalitico
 
 from .models import Assinatura, Laboratorio, Usuario
 
@@ -93,3 +96,84 @@ class TestUsuario(TestCase):
         )
 
         self.assertEqual(usuario.funcao, Usuario.ANALISTA)
+
+
+class TestConfiguracoes(TestCase):
+    """A tela de configurações: mesmo cartão do resto do programa."""
+
+    def setUp(self):
+        self.laboratorio = Laboratorio.objects.create(
+            razao_social="Lab A", cnpj="11.111.111/0001-11", responsavel_tecnico="Dra. Fulana"
+        )
+        Assinatura.objects.create(laboratorio=self.laboratorio, modulo=Assinatura.COMPLETO)
+        self.usuario = Usuario.objects.create_user(
+            username="analista", password="senha-longa-de-teste",
+            laboratorio=self.laboratorio, funcao=Usuario.RESPONSAVEL,
+        )
+        self.sistema = SistemaAnalitico.objects.create(
+            laboratorio=self.laboratorio, papel=SistemaAnalitico.TESTE,
+            equipamento="Atellica", numero_serie="IH00715", metodologia="Quimioluminescência",
+        )
+        self.url = reverse("configuracoes")
+        self.client.force_login(self.usuario)
+
+    def test_mostra_laboratorio_equipe_e_equipamento(self):
+        resposta = self.client.get(self.url)
+
+        self.assertEqual(resposta.status_code, 200)
+        self.assertContains(resposta, "Lab A")
+        self.assertContains(resposta, "Dra. Fulana")
+        self.assertContains(resposta, "IH00715")
+
+    def test_nomeia_o_papel_do_sistema_por_extenso_curto(self):
+        # O rótulo longo truncado virava "Sistema ...", que não distingue o
+        # sistema em teste do de comparação.
+        resposta = self.client.get(self.url)
+
+        self.assertContains(resposta, "S.A. em teste")
+
+    def test_insumo_vencido_aparece_marcado(self):
+        Reagente.objects.create(
+            sistema=self.sistema, nome="Reagente velho", lote="L1",
+            validade=timezone.localdate() - timedelta(days=1),
+        )
+
+        resposta = self.client.get(self.url)
+
+        self.assertContains(resposta, "vencido")
+
+    def test_insumo_proximo_do_vencimento_avisa_com_antecedencia(self):
+        Reagente.objects.create(
+            sistema=self.sistema, nome="Reagente a vencer", lote="L2",
+            validade=timezone.localdate() + timedelta(days=10),
+        )
+
+        resposta = self.client.get(self.url)
+
+        self.assertContains(resposta, "vence em 10 d")
+
+    def test_analito_sem_intervalo_de_referencia_e_sinalizado(self):
+        Mensurando.objects.create(
+            laboratorio=self.laboratorio, nome="Ferritina",
+            unidade_medida="ng/mL", material_biologico="soro",
+        )
+
+        resposta = self.client.get(self.url)
+
+        self.assertContains(resposta, "concordância clínica não é calculada")
+
+    def test_laboratorio_alheio_nao_aparece(self):
+        outro = Laboratorio.objects.create(razao_social="Lab B", cnpj="22.222.222/0001-22")
+        SistemaAnalitico.objects.create(
+            laboratorio=outro, papel=SistemaAnalitico.TESTE,
+            equipamento="Cobas", numero_serie="ZZ99999", metodologia="Eletroquimioluminescência",
+        )
+
+        resposta = self.client.get(self.url)
+
+        self.assertNotContains(resposta, "ZZ99999")
+
+    def test_visitante_vai_para_o_login(self):
+        self.client.logout()
+
+        self.assertEqual(self.client.get(self.url).status_code, 302)

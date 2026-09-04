@@ -311,30 +311,83 @@
       </summary>
       <div class="corpo">
         {% if precisao %}
-        <table style="margin-bottom: 14px">
-          <tr>
-            <th>Nível</th><th class="n">n</th><th class="n">Média</th>
-            <th class="n">CV repetibilidade</th><th class="n">CV intermediária</th>
-            <th class="n">Limite</th><th>Situação</th>
-          </tr>
-          {% for item in precisao %}
-          <tr>
-            <td>{{ item.numero }}</td>
-            <td class="n">{{ item.estatistica.n_total }}</td>
-            <td class="n">{{ item.estatistica.media|floatformat:3|default:"—" }}</td>
-            <td class="n">{{ item.estatistica.cv_repetibilidade|floatformat:2|default:"—" }}%</td>
-            <td class="n"><strong>{{ item.estatistica.cv_intermediaria|floatformat:2|default:"—" }}</strong>{% if item.estatistica.cv_intermediaria %}%{% endif %}</td>
+        {% for item in precisao %}
+        <div class="nivel">
+          <h3 style="font-size: 13px; margin: 0 0 9px; display: flex; align-items: center; gap: 8px">
+            Nível {{ item.numero }} &mdash; {{ item.nivel.controle.nome }}
+            {% if item.avaliacao.status %}<span class="estado estado--{{ item.avaliacao.status }}">{{ item.avaliacao.status }}</span>{% endif %}
+          </h3>
+
+          {% comment %}Estatística de cada corrida: é a leitura do dia.{% endcomment %}
+          <table style="margin-bottom: 10px">
+            <tr>
+              <th>Corrida</th><th class="n">n</th><th class="n">Média intracorrida</th>
+              <th class="n">Desvio padrão</th><th class="n">CV</th>
+            </tr>
+            {% for corrida in item.estatistica.corridas %}
+            <tr>
+              <td>{{ corrida.corrida }}</td>
+              <td class="n">{{ corrida.n }}</td>
+              <td class="n">{{ corrida.media|floatformat:3|default:"—" }}</td>
+              <td class="n">{{ corrida.desvio_padrao|floatformat:4|default:"—" }}</td>
+              <td class="n">{{ corrida.cv|floatformat:2|default:"—" }}%</td>
+            </tr>
+            {% endfor %}
+            <tr style="background: var(--faixa)">
+              <td><strong>Global</strong></td>
+              <td class="n"><strong>{{ item.estatistica.n_total }}</strong></td>
+              <td class="n"><strong>{{ item.estatistica.media|floatformat:3|default:"—" }}</strong></td>
+              <td class="n"><strong>{{ item.estatistica.desvio_padrao|floatformat:4|default:"—" }}</strong></td>
+              <td class="n"><strong>{{ item.estatistica.cv|floatformat:2|default:"—" }}%</strong></td>
+            </tr>
+          </table>
+
+          <table>
+            <tr><th>Avaliação</th><th class="n">Obtido</th><th class="n">Referência</th><th class="n">Limite</th><th>Situação</th></tr>
             {% for indicador in item.avaliacao.indicadores %}{% if indicador.indicador == "imprecisão" %}
+            <tr>
+              <td>Imprecisão &mdash; {{ item.estatistica.tipo_cv_aplicavel|default:"CV" }}</td>
+              <td class="n"><strong>{{ item.estatistica.cv|floatformat:2|default:"—" }}%</strong></td>
+              <td class="n">&mdash;</td>
               <td class="n">{{ indicador.limite_pct|floatformat:2|default:"—" }}%</td>
               <td><span class="estado estado--{{ indicador.status }}" style="border: none; padding: 0">{{ indicador.status }}</span></td>
+            </tr>
             {% endif %}{% endfor %}
-          </tr>
-          {% endfor %}
-        </table>
+
+            {% comment %}
+              Bias absoluto e relativo contra a média do grupo de pares. Sem essa
+              média informada a linha diz o que falta, em vez de sumir.
+            {% endcomment %}
+            {% if item.bias.avaliavel %}
+            <tr>
+              <td>
+                Bias &mdash; {% if item.origem_do_bias == "interlaboratorial" %}{{ item.origem_do_alvo }}{% else %}reta de regressão{% endif %}
+                <div class="nota">absoluto {{ item.bias.absoluto|floatformat:4 }}</div>
+              </td>
+              <td class="n"><strong>{{ item.bias.relativo_pct|floatformat:2 }}%</strong></td>
+              <td class="n">{{ item.bias.media_alvo|floatformat:3|default:"—" }}</td>
+              {% for indicador in item.avaliacao.indicadores %}{% if indicador.indicador == "bias" %}
+              <td class="n">{{ indicador.limite_pct|floatformat:2|default:"—" }}%</td>
+              <td><span class="estado estado--{{ indicador.status }}" style="border: none; padding: 0">{{ indicador.status }}</span></td>
+              {% endif %}{% endfor %}
+            </tr>
+            {% else %}
+            <tr>
+              <td>Bias</td>
+              <td class="n" colspan="4" style="text-align: left; color: var(--atencao-tinta)">
+                Exatidão não avaliada &mdash; informe a média do estudo interlaboratorial
+                (e-Lab, Unity, fleet) para este nível.
+              </td>
+            </tr>
+            {% endif %}
+          </table>
+        </div>
+        {% endfor %}
+
         <p class="nota">
-          O CV que alimenta o erro total é o
-          <strong>{{ precisao.0.estatistica.tipo_cv_aplicavel|default:"—" }}</strong>: inclui a variação entre
-          corridas e representa o método na rotina.
+          O CV comparado com o limite é o <strong>{{ precisao.0.estatistica.tipo_cv_aplicavel|default:"—" }}</strong>,
+          que é dispersão dentro da corrida. A variação entre os dias entra no relatório
+          como aviso quando muda a conclusão.
         </p>
 
         {% for grafico in graficos.levey_jennings %}
@@ -378,7 +431,12 @@
               <td class="nota">não paramétrica, resistente a valores discrepantes</td>
             </tr>
             <tr>
-              <td>Regressão linear</td>
+              <td>Regressão linear simples</td>
+              <td class="n">y = {{ c.regressao.inclinacao|floatformat:4|default:"—" }}x {% if c.regressao.intercepto >= 0 %}+{% endif %} {{ c.regressao.intercepto|floatformat:4|default:"—" }}</td>
+              <td class="nota">mínimos quadrados — é a reta desenhada no gráfico</td>
+            </tr>
+            <tr>
+              <td>Correlação de Pearson</td>
               <td class="n">r = {{ c.regressao.r|floatformat:4|default:"—" }} &middot; r² = {{ c.regressao.r2|floatformat:4|default:"—" }}</td>
               <td class="nota">r indica se a faixa estudada foi ampla o bastante — <strong>não mede concordância</strong></td>
             </tr>
@@ -398,7 +456,24 @@
               <td class="nota">{{ c.analitica.dentro_do_limite }} de {{ c.analitica.avaliadas }} amostras dentro do erro total permitido</td>
             </tr>
             <tr>
-              <td>Concordância clínica</td>
+              <td>
+                Concordância clínica
+                {% comment %}
+                  Cada método é classificado contra o intervalo que ele próprio
+                  imprime no laudo. Mostrar quais foram usados é o que permite
+                  conferir o número — sem isso, ele é indefensável.
+                {% endcomment %}
+                {% if c.clinica.intervalo_comparacao %}
+                <div class="nota">
+                  comparação {{ c.clinica.intervalo_comparacao.0|floatformat:"-3" }}–{{ c.clinica.intervalo_comparacao.1|floatformat:"-3" }}
+                  {% if c.clinica.intervalos_diferentes %}
+                    &middot; teste {{ c.clinica.intervalo_teste.0|floatformat:"-3" }}–{{ c.clinica.intervalo_teste.1|floatformat:"-3" }}
+                  {% else %}
+                    &middot; mesmo intervalo nos dois métodos
+                  {% endif %}
+                </div>
+                {% endif %}
+              </td>
               <td class="n">{{ c.clinica.concordancia_pct|floatformat:1|default:"—" }}%</td>
               <td class="nota">{% if c.clinica.observacao %}{{ c.clinica.observacao|capfirst }}{% else %}{{ c.clinica.concordantes }} de {{ c.clinica.n }} amostras com a mesma interpretação{% endif %}</td>
             </tr>
@@ -531,8 +606,9 @@
       <p class="vazio" style="font-size: 12.5px">Sem níveis cadastrados.</p>
       {% endfor %}
       <p class="nota" style="margin: 14px 0 0; padding-top: 12px; border-top: 1px solid var(--grade)">
-        Os valores são a <strong style="color: var(--tinta-2)">precisão intermediária</strong>, que
-        inclui a variação entre os dias. É ela que entra no erro total.
+        Os valores são o <strong style="color: var(--tinta-2)">CV agrupado das corridas</strong>,
+        que é a dispersão dentro da corrida. A variação entre os dias não entra neste
+        número — quando ela muda a conclusão, o relatório avisa.
       </p>
     </section>
 {% endif %}
@@ -570,7 +646,7 @@
     <section class="cartao" style="padding: 15px 16px">
       <div style="font-size: 12px; font-weight: 600; color: var(--tinta-2); margin-bottom: 11px">Atalhos</div>
       <ul style="display: flex; flex-direction: column; gap: 9px; font-size: 12.5px">
-        <li><a href="/admin/estudos/nivelestudo/?estudo__id__exact={{ estudo.pk }}">Lançar réplicas de controle</a></li>
+        <li><a href="{% url 'replicas_estudo' estudo.pk %}">Lançar réplicas de controle</a></li>
         <li><a href="/admin/estudos/estudo/{{ estudo.pk }}/change/">Lançar amostras pareadas</a></li>
         <li><a href="/admin/catalogo/especificacaoqualidade/{{ estudo.especificacao.pk }}/change/">Revisar a ficha do analito</a></li>
       </ul>

@@ -53,7 +53,7 @@ class Command(BaseCommand):
             usuario = self._usuario(laboratorio)
             mensurando = self._mensurando(laboratorio)
             teste, comparacao = self._sistemas(laboratorio)
-            self._insumos(teste, comparacao)
+            self._insumos(teste, comparacao, mensurando)
             especificacao = self._especificacao(laboratorio, mensurando)
             estudo = self._estudo(laboratorio, usuario, mensurando, teste, comparacao, especificacao)
             self._dados_brutos(estudo, teste)
@@ -141,7 +141,7 @@ class Command(BaseCommand):
         )
         return teste, comparacao
 
-    def _insumos(self, teste: SistemaAnalitico, comparacao: SistemaAnalitico):
+    def _insumos(self, teste: SistemaAnalitico, comparacao: SistemaAnalitico, mensurando=None):
         Reagente.objects.get_or_create(
             sistema=teste,
             lote="34351224",
@@ -172,6 +172,7 @@ class Command(BaseCommand):
                 lote=lote,
                 defaults={
                     "nome": nome,
+                    "mensurando": mensurando,
                     "validade": date(2027, 3, 31),
                     "valor_alvo": Decimal(alvo),
                 },
@@ -216,6 +217,13 @@ class Command(BaseCommand):
                 "sistema_comparacao": comparacao,
                 "especificacao": especificacao,
                 "data_inicio": date.today() - timedelta(days=7),
+                # O método novo lê um pouco mais alto e traz o intervalo do
+                # próprio fabricante: é o caso em que os dois intervalos
+                # diferem, e a concordância clínica precisa usar cada um.
+                "referencia_comparacao_inferior": Decimal("0.8000"),
+                "referencia_comparacao_superior": Decimal("1.8000"),
+                "referencia_teste_inferior": Decimal("0.8500"),
+                "referencia_teste_superior": Decimal("1.8600"),
                 "criado_por": usuario,
                 "observacoes": "Estudo de demonstração gerado pelo comando dados_exemplo.",
             },
@@ -254,10 +262,18 @@ class Command(BaseCommand):
 
         for numero, corridas in replicas_por_nivel.items():
             controle = Controle.objects.get(sistema=teste, nivel=numero)
+            # A média do grupo de pares fica um pouco acima do alvo do fabricante,
+            # como costuma acontecer: é ela, e não o alvo, que define a exatidão.
+            media_pares = {1: "0.6100", 2: "1.3200", 3: "3.2400"}[numero]
             nivel, criado = NivelEstudo.objects.get_or_create(
                 estudo=estudo,
                 numero=numero,
-                defaults={"controle": controle, "concentracao_declarada": controle.valor_alvo},
+                defaults={
+                    "controle": controle,
+                    "concentracao_declarada": controle.valor_alvo,
+                    "media_interlaboratorial": Decimal(media_pares),
+                    "provedor_interlaboratorial": NivelEstudo.ELAB,
+                },
             )
             if not criado:
                 continue
@@ -344,8 +360,8 @@ class Command(BaseCommand):
 
         controle_hba1c, _ = Controle.objects.get_or_create(
             sistema=teste, nivel=1, lote="A1C-2026B",
-            defaults={"nome": "Controle HbA1c Nível 1", "validade": date(2027, 6, 30),
-                      "valor_alvo": Decimal("5.6000")},
+            defaults={"nome": "Controle HbA1c Nível 1", "mensurando": hba1c,
+                      "validade": date(2027, 6, 30), "valor_alvo": Decimal("5.6000")},
         )
         em_coleta, criado = Estudo.objects.get_or_create(
             laboratorio=laboratorio, identificacao="Validação HbA1c — Atellica IH00715",
@@ -356,6 +372,8 @@ class Command(BaseCommand):
             },
         )
         if criado:
+            # HbA1c fica sem média de pares de propósito: é a demonstração do
+            # nível em que a exatidão não é avaliada, e a tela diz o porquê.
             nivel = NivelEstudo.objects.create(
                 estudo=em_coleta, numero=1, controle=controle_hba1c,
                 concentracao_declarada=Decimal("5.6000"),
@@ -386,8 +404,8 @@ class Command(BaseCommand):
 
         controle_glicose, _ = Controle.objects.get_or_create(
             sistema=teste, nivel=1, lote="GLI-2025C",
-            defaults={"nome": "Controle Química Nível 1", "validade": date(2026, 12, 31),
-                      "valor_alvo": Decimal("95.0000")},
+            defaults={"nome": "Controle Química Nível 1", "mensurando": glicose,
+                      "validade": date(2026, 12, 31), "valor_alvo": Decimal("95.0000")},
         )
 
         liberado, criado = Estudo.objects.get_or_create(
@@ -408,6 +426,8 @@ class Command(BaseCommand):
             nivel = NivelEstudo.objects.create(
                 estudo=liberado, numero=1, controle=controle_glicose,
                 concentracao_declarada=Decimal("95.0000"),
+                media_interlaboratorial=Decimal("95.4000"),
+                provedor_interlaboratorial=NivelEstudo.UNITY,
             )
             corridas = [
                 ["94.2", "95.1", "94.7", "95.4", "94.6"],

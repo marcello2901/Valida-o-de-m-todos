@@ -91,6 +91,11 @@ class SistemaAnalitico(models.Model):
         Laboratorio, verbose_name="laboratório", on_delete=models.CASCADE, related_name="sistemas"
     )
     papel = models.CharField("papel no estudo", max_length=12, choices=PAPEIS)
+
+    # Rótulo curto para cartão e chip. Truncar o rótulo longo produzia
+    # "Sistema ..." — que não distingue teste de comparação, justamente a
+    # informação que o rótulo existe para dar.
+    _PAPEL_CURTO = {TESTE: "S.A. em teste", COMPARACAO: "S.A. de comparação"}
     equipamento = models.CharField("equipamento", max_length=120, help_text="Ex.: Atellica")
     numero_serie = models.CharField("número de série", max_length=60, help_text="Ex.: IH00715")
     metodologia = models.CharField("metodologia", max_length=120, help_text="Ex.: Quimioluminescência")
@@ -109,6 +114,9 @@ class SistemaAnalitico(models.Model):
 
     def __str__(self):
         return f"{self.equipamento} — nº {self.numero_serie} ({self.metodologia})"
+
+    def papel_curto(self) -> str:
+        return self._PAPEL_CURTO.get(self.papel, self.papel)
 
     def clean(self):
         minimo = self.intervalo_analitico_minimo
@@ -163,10 +171,22 @@ class Calibrador(InsumoRastreavel):
 
 
 class Controle(InsumoRastreavel):
-    """Material de controle usado no estudo de precisão, identificado por nível."""
+    """Material de controle usado no estudo de precisão, identificado por nível.
+
+    O mensurando é parte da identidade do registro, não um detalhe: um frasco de
+    controle multiparamétrico tem um valor alvo **por analito**. Sem esse
+    vínculo, ``valor_alvo`` não diz de que analito é, e a tela de lançamento
+    ofereceria o controle de HbA1c para um estudo de FT4 só porque os dois rodam
+    no mesmo equipamento.
+    """
 
     sistema = models.ForeignKey(
         SistemaAnalitico, verbose_name="sistema analítico", on_delete=models.CASCADE, related_name="controles"
+    )
+    mensurando = models.ForeignKey(
+        "catalogo.Mensurando", verbose_name="mensurando", on_delete=models.PROTECT,
+        related_name="controles", null=True, blank=True,
+        help_text="Analito a que se refere o valor alvo deste frasco.",
     )
     nivel = models.PositiveSmallIntegerField("nível", help_text="1, 2, 3… conforme a concentração do material")
     valor_alvo = models.DecimalField(
@@ -181,6 +201,18 @@ class Controle(InsumoRastreavel):
 
     def __str__(self):
         return f"Nível {self.nivel} — {self.nome} — lote {self.lote}"
+
+    @classmethod
+    def do_estudo(cls, sistema, mensurando):
+        """Controles elegíveis para um estudo: mesmo sistema, mesmo analito.
+
+        Um controle sem mensurando declarado continua elegível — é cadastro
+        antigo, e recusá-lo esconderia material que o laboratório já usa. Mas o
+        de outro analito nunca aparece.
+        """
+        return cls.objects.filter(sistema=sistema).filter(
+            models.Q(mensurando=mensurando) | models.Q(mensurando__isnull=True)
+        )
 
 
 class EspecificacaoQualidade(models.Model):

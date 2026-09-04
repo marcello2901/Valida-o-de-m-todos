@@ -234,19 +234,33 @@ def concordancia_clinica(
     limite_inferior: float | None,
     limite_superior: float | None,
     identificacoes: Sequence[str] | None = None,
+    limite_inferior_teste: float | None = None,
+    limite_superior_teste: float | None = None,
 ) -> dict:
     """Percentual de amostras que os dois métodos classificam do mesmo jeito.
 
     Classifica cada resultado como abaixo, dentro ou acima do intervalo de
-    referência informado, e compara as classificações. É a tradução da diferença
-    analítica para a consequência clínica: uma discordância aqui significa um
-    paciente que seria considerado normal por um método e alterado pelo outro.
+    referência **do seu próprio método** e compara as classificações. É a tradução
+    da diferença analítica para a consequência clínica: uma discordância aqui
+    significa um paciente que seria considerado normal por um método e alterado
+    pelo outro.
+
+    Cada método tem o seu intervalo por uma razão prática: quando o laboratório
+    troca de metodologia ele costuma trocar também o intervalo de referência que
+    imprime no laudo. Avaliar os dois contra um intervalo só mediria uma
+    discordância que na prática não chega ao paciente — ou esconderia uma que
+    chega. ``limite_*_teste`` em branco significa "o mesmo intervalo dos dois
+    lados", que é o caso de quem manteve o intervalo antigo.
 
     ``reclassificacoes`` lista cada discordância com as duas classificações, para
     o relatório mostrar em qual direção o método novo erra — se ele cria falsos
     alterados ou deixa de sinalizar alterações reais.
     """
-    if limite_inferior is None or limite_superior is None:
+    # Ou o método em teste tem intervalo próprio inteiro, ou usa o da
+    # comparação. Preencher metade a partir de cada método classificaria contra
+    # um intervalo que não existe em lugar nenhum — e sem ninguém perceber.
+    metade_do_teste = (limite_inferior_teste is None) != (limite_superior_teste is None)
+    if metade_do_teste:
         return {
             "n": 0,
             "avaliadas": 0,
@@ -254,10 +268,25 @@ def concordancia_clinica(
             "discordantes": 0,
             "concordancia_pct": None,
             "reclassificacoes": [],
-            "observacao": "intervalo de referência não informado para o mensurando",
+            "intervalos_diferentes": False,
+            "observacao": (
+                "intervalo de referência do método em teste informado pela metade: "
+                "informe os dois limites ou nenhum"
+            ),
         }
 
-    if limite_inferior > limite_superior:
+    if limite_inferior_teste is None:
+        limite_inferior_teste = limite_inferior
+    if limite_superior_teste is None:
+        limite_superior_teste = limite_superior
+
+    faltando = (
+        limite_inferior is None
+        or limite_superior is None
+        or limite_inferior_teste is None
+        or limite_superior_teste is None
+    )
+    if faltando:
         return {
             "n": 0,
             "avaliadas": 0,
@@ -265,6 +294,22 @@ def concordancia_clinica(
             "discordantes": 0,
             "concordancia_pct": None,
             "reclassificacoes": [],
+            "intervalos_diferentes": False,
+            "observacao": "intervalo de referência não informado para um dos métodos",
+        }
+
+    invertido = (
+        limite_inferior > limite_superior or limite_inferior_teste > limite_superior_teste
+    )
+    if invertido:
+        return {
+            "n": 0,
+            "avaliadas": 0,
+            "concordantes": 0,
+            "discordantes": 0,
+            "concordancia_pct": None,
+            "reclassificacoes": [],
+            "intervalos_diferentes": False,
             "observacao": "intervalo de referência inválido: o limite inferior é maior que o superior",
         }
 
@@ -276,7 +321,7 @@ def concordancia_clinica(
 
     for indice, (x, y) in enumerate(pares):
         classe_comparacao = classificar_no_intervalo(x, limite_inferior, limite_superior)
-        classe_teste = classificar_no_intervalo(y, limite_inferior, limite_superior)
+        classe_teste = classificar_no_intervalo(y, limite_inferior_teste, limite_superior_teste)
 
         if classe_comparacao == classe_teste:
             concordantes += 1
@@ -300,5 +345,11 @@ def concordancia_clinica(
         "discordantes": len(reclassificacoes),
         "concordancia_pct": (concordantes / n * 100) if n else None,
         "reclassificacoes": reclassificacoes,
+        "intervalos_diferentes": (
+            limite_inferior != limite_inferior_teste
+            or limite_superior != limite_superior_teste
+        ),
+        "intervalo_comparacao": (limite_inferior, limite_superior),
+        "intervalo_teste": (limite_inferior_teste, limite_superior_teste),
         "observacao": None,
     }
