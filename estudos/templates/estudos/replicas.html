@@ -1,28 +1,19 @@
 {% extends "base.html" %}
+{% load static %}
 
 {% block titulo %}Lançar réplicas — {{ estudo.mensurando.nome }}{% endblock %}
 
 {% block estilo %}
 <style>
-  .area { flex-grow: 1; padding: 18px 24px; }
-  .colunas { display: flex; gap: 14px; align-items: start; flex-wrap: wrap; }
-  .coluna { flex: 1 1 250px; min-width: 236px; max-width: 340px; padding: 0; overflow: hidden; }
+  /* Colunas de lançamento. Herdam o leito e o cabeçalho de coluna do quadro:
+     é a mesma metáfora — uma pista por nível, cartão por cima. */
+  .pistas { display: flex; gap: 14px; align-items: start; flex-wrap: wrap; }
+  .pista { flex: 1 1 250px; min-width: 236px; max-width: 340px; padding: 0; overflow: hidden; }
 
   .cabeca { padding: 13px 14px 11px; border-bottom: 1px solid var(--grade); background: var(--faixa); }
   .cabeca h2 { font-size: 14px; font-weight: 600; margin: 0; }
   .cabeca .material { font-size: 11.5px; color: var(--tinta-3); margin: 2px 0 0; }
-  .alvo { margin-top: 10px; }
-  .alvo label { display: block; font-size: 10px; color: var(--tinta-3);
-                text-transform: uppercase; letter-spacing: .05em; font-weight: 600; margin-bottom: 3px; }
-  .alvo .par { display: flex; gap: 5px; }
-
-  input[type="text"], input[type="number"], select {
-    font: inherit; font-size: 13px; color: var(--tinta); background: var(--superficie);
-    border: 1px solid var(--linha); border-radius: 6px; padding: 5px 8px; width: 100%;
-    font-variant-numeric: tabular-nums;
-  }
-  input:focus, select:focus { outline: 2px solid var(--acento); outline-offset: -1px; border-color: var(--acento); }
-  input:disabled { background: var(--chip); color: var(--tinta-3); }
+  .par { display: flex; gap: 5px; }
 
   .linhas { padding: 6px 10px 12px; }
   .linha { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
@@ -39,9 +30,6 @@
 
   .nova { flex: 0 0 236px; padding: 14px; }
   .nova h2 { font-size: 13px; font-weight: 600; margin: 0 0 4px; }
-  .nova .campo { margin-top: 10px; }
-  .nova label { display: block; font-size: 10px; color: var(--tinta-3);
-                text-transform: uppercase; letter-spacing: .05em; font-weight: 600; margin-bottom: 3px; }
 
   .rodape-fixo {
     position: sticky; bottom: 0; margin-top: 16px; padding: 12px 0 4px;
@@ -50,6 +38,8 @@
   }
 </style>
 {% endblock %}
+
+{% block scripts %}<script src="{% static 'js/colar.js' %}"></script>{% endblock %}
 
 {% block corpo %}
 <div class="barra">
@@ -68,12 +58,19 @@
 </div>
 
 <div class="area">
+  <p class="nota" style="margin: 0 0 12px">
+    Dá para colar direto da planilha: clique na réplica de onde quer começar e
+    tecle <strong>Ctrl+V</strong>. Uma coluna de rótulos (“Replicata 1”) é
+    descartada, e colar três colunas preenche os três níveis de uma vez.
+  </p>
+  <p class="aviso-colagem" data-aviso-colagem hidden></p>
+
   <form method="post">
     {% csrf_token %}
-    <div class="colunas">
+    <div class="pistas" data-grade="replicas">
 
       {% for coluna in colunas %}
-      <section class="cartao coluna">
+      <section class="cartao pista">
         <div class="cabeca">
           <h2 class="display">Nível {{ coluna.nivel.numero }}</h2>
           <p class="material">{{ coluna.nivel.controle.nome }} &middot; lote {{ coluna.nivel.controle.lote }}</p>
@@ -81,7 +78,7 @@
             A média do grupo de pares fica aqui, e não noutra tela, porque é o
             alvo do bias deste nível. Em branco, a exatidão não é avaliada.
           {% endcomment %}
-          <div class="alvo">
+          <div class="campo">
             <label for="alvo_{{ coluna.nivel.pk }}">Média interlaboratorial</label>
             <div class="par">
               <input type="text" inputmode="decimal" id="alvo_{{ coluna.nivel.pk }}"
@@ -112,6 +109,7 @@
               {% else %}
                 <input type="text" inputmode="decimal" name="{{ linha.campo }}"
                        value="{{ linha.valor|default_if_none:'' }}"
+                       data-linha="{{ linha.posicao }}" data-coluna="{{ forloop.parentloop.counter0 }}"
                        aria-label="Réplica {{ linha.posicao }} do nível {{ coluna.nivel.numero }}">
               {% endif %}
             </div>

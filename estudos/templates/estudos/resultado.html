@@ -647,7 +647,7 @@
       <div style="font-size: 12px; font-weight: 600; color: var(--tinta-2); margin-bottom: 11px">Atalhos</div>
       <ul style="display: flex; flex-direction: column; gap: 9px; font-size: 12.5px">
         <li><a href="{% url 'replicas_estudo' estudo.pk %}">Lançar réplicas de controle</a></li>
-        <li><a href="/admin/estudos/estudo/{{ estudo.pk }}/change/">Lançar amostras pareadas</a></li>
+        <li><a href="{% url 'amostras_estudo' estudo.pk %}">Lançar amostras pareadas</a></li>
         <li><a href="/admin/catalogo/especificacaoqualidade/{{ estudo.especificacao.pk }}/change/">Revisar a ficha do analito</a></li>
       </ul>
     </section>

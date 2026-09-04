@@ -618,3 +618,285 @@ class TestIntervalosDeReferenciaPorMetodo(TestCase):
         self.assertContains(resposta, "Regressão linear simples")
         self.assertContains(resposta, "regressão linear simples")
         self.assertContains(resposta, "identidade (y = x)")
+
+
+class TestGradeDeAmostras(TestCase):
+    """Grade de amostras pareadas: 40 linhas abertas, ampliáveis."""
+
+    def setUp(self):
+        self.laboratorio = montar_laboratorio("Lab A", "11.111.111/0001-11")
+        self.usuario = Usuario.objects.create_user(
+            username="analista", password="senha-longa-de-teste",
+            laboratorio=self.laboratorio, funcao=Usuario.ANALISTA,
+        )
+        self.estudo = montar_estudo(self.laboratorio, self.usuario)
+        self.url = reverse("amostras_estudo", args=[self.estudo.pk])
+        self.client.force_login(self.usuario)
+
+    def test_abre_com_o_minimo_do_ep09(self):
+        grade = servicos.montar_grade_amostras(self.estudo)
+
+        self.assertEqual(grade["total"], 40)
+        self.assertEqual(sum(len(pista) for pista in grade["pistas"]), 40)
+
+    def test_as_linhas_se_repartem_em_pistas_de_vinte(self):
+        grade = servicos.montar_grade_amostras(self.estudo)
+
+        self.assertEqual([len(pista) for pista in grade["pistas"]], [20, 20])
+
+    def test_as_amostras_ja_lancadas_ocupam_as_primeiras_linhas(self):
+        # O fixture cadastra 10 amostras.
+        linhas = servicos.montar_grade_amostras(self.estudo)["pistas"][0]
+
+        self.assertEqual(linhas[0]["identificacao"], "AM-001")
+        self.assertIsNotNone(linhas[0]["comparacao"])
+        self.assertEqual(linhas[10]["identificacao"], "")
+
+    def test_pedir_mais_linhas_amplia_a_grade(self):
+        grade = servicos.montar_grade_amostras(self.estudo, linhas_pedidas=50)
+
+        self.assertEqual(grade["total"], 50)
+        self.assertEqual([len(pista) for pista in grade["pistas"]], [20, 20, 10])
+
+    def test_a_grade_nunca_encolhe_abaixo_do_que_ja_foi_digitado(self):
+        # Um número pequeno na barra de endereço não pode esconder amostra.
+        for indice in range(11, 46):
+            AmostraComparacao.objects.create(
+                estudo=self.estudo, identificacao=f"AM-{indice:03d}",
+                valor_comparacao=Decimal("1.0"), valor_teste=Decimal("1.0"),
+            )
+
+        grade = servicos.montar_grade_amostras(self.estudo, linhas_pedidas=5)
+
+        self.assertEqual(grade["total"], 45)
+
+    def test_o_botao_de_mais_linhas_leva_a_grade_maior(self):
+        resposta = self.client.post(self.url, {"acao": "adicionar_linhas", "total": "40"})
+
+        self.assertEqual(resposta.status_code, 302)
+        self.assertIn("linhas=50", resposta["Location"])
+
+    def test_salvar_grava_a_amostra_nova(self):
+        self.client.post(
+            self.url,
+            {
+                "total": "40",
+                "amostra_11_id": "AM-011",
+                "amostra_11_comparacao": "3,20",
+                "amostra_11_teste": "3,26",
+            },
+        )
+
+        gravada = AmostraComparacao.objects.get(estudo=self.estudo, identificacao="AM-011")
+        self.assertEqual(gravada.valor_comparacao, Decimal("3.2000"))
+        self.assertEqual(gravada.valor_teste, Decimal("3.2600"))
+
+    def test_identificacao_em_branco_recebe_a_sugerida(self):
+        # Ninguém deveria digitar quarenta identificadores sequenciais à mão.
+        self.client.post(
+            self.url,
+            {"total": "40", "amostra_12_id": "", "amostra_12_comparacao": "1", "amostra_12_teste": "1"},
+        )
+
+        self.assertTrue(
+            AmostraComparacao.objects.filter(estudo=self.estudo, identificacao="AM-012").exists()
+        )
+
+    def test_meia_amostra_nao_grava_nada(self):
+        # Um par incompleto não entra em regressão nenhuma.
+        antes = self.estudo.amostras_comparacao.count()
+
+        resposta = self.client.post(
+            self.url,
+            {"total": "40", "amostra_11_comparacao": "3,20", "amostra_11_teste": ""},
+            follow=True,
+        )
+
+        self.assertEqual(self.estudo.amostras_comparacao.count(), antes)
+        self.assertContains(resposta, "nos dois sistemas")
+
+    def test_identificacao_repetida_e_recusada_com_as_linhas(self):
+        resposta = self.client.post(
+            self.url,
+            {
+                "total": "40",
+                "amostra_11_id": "DUPLA", "amostra_11_comparacao": "1", "amostra_11_teste": "1",
+                "amostra_12_id": "DUPLA", "amostra_12_comparacao": "2", "amostra_12_teste": "2",
+            },
+            follow=True,
+        )
+
+        self.assertContains(resposta, "repete a da linha 11")
+        self.assertFalse(
+            AmostraComparacao.objects.filter(estudo=self.estudo, identificacao="DUPLA").exists()
+        )
+
+    def test_valor_ilegivel_nao_grava_nada(self):
+        antes = self.estudo.amostras_comparacao.count()
+
+        self.client.post(
+            self.url,
+            {
+                "total": "40",
+                "amostra_11_comparacao": "1", "amostra_11_teste": "1",
+                "amostra_12_comparacao": "abc", "amostra_12_teste": "2",
+            },
+        )
+
+        self.assertEqual(self.estudo.amostras_comparacao.count(), antes)
+
+    def test_campos_em_branco_apagam_a_amostra(self):
+        antes = self.estudo.amostras_comparacao.count()
+
+        self.client.post(
+            self.url,
+            {"total": "40", "amostra_1_id": "AM-001", "amostra_1_comparacao": "", "amostra_1_teste": ""},
+        )
+
+        self.assertEqual(self.estudo.amostras_comparacao.count(), antes - 1)
+
+    def test_envio_parcial_nao_apaga_o_que_nao_veio(self):
+        # A mesma armadilha da grade de réplicas: ausente não é vazio.
+        antes = self.estudo.amostras_comparacao.count()
+
+        self.client.post(self.url, {"total": "40"})
+
+        self.assertEqual(self.estudo.amostras_comparacao.count(), antes)
+
+    def test_amostra_excluida_com_justificativa_nao_e_alterada(self):
+        alvo = self.estudo.amostras_comparacao.first()
+        alvo.excluida = True
+        alvo.justificativa_exclusao = "hemólise"
+        alvo.save()
+
+        self.client.post(
+            self.url,
+            {"total": "40", "amostra_1_id": "OUTRA", "amostra_1_comparacao": "9", "amostra_1_teste": "9"},
+        )
+
+        alvo.refresh_from_db()
+        self.assertTrue(alvo.excluida)
+        self.assertEqual(alvo.justificativa_exclusao, "hemólise")
+
+    def test_estudo_liberado_nao_aceita_lancamento(self):
+        self.estudo.situacao = Estudo.LIBERADO
+        self.estudo.save(update_fields=["situacao"])
+
+        self.assertEqual(self.client.get(self.url).status_code, 302)
+
+    def test_laboratorio_alheio_nao_abre_a_grade(self):
+        outro = montar_laboratorio("Lab B", "22.222.222/0001-22")
+        intruso = Usuario.objects.create_user(
+            username="intruso", password="senha-longa-de-teste", laboratorio=outro
+        )
+        self.client.force_login(intruso)
+
+        self.assertEqual(self.client.get(self.url).status_code, 404)
+
+    def test_um_numero_absurdo_de_linhas_nao_derruba_a_tela(self):
+        resposta = self.client.get(self.url, {"linhas": "999999"})
+
+        self.assertEqual(resposta.status_code, 200)
+
+    def test_o_card_do_quadro_leva_a_grade_que_falta(self):
+        # Precisão completa, comparabilidade não: o card promete amostras.
+        self.assertEqual(self.estudo.proxima_acao(), "Faltam 30 amostras")
+        self.assertEqual(self.estudo.tela_da_proxima_acao(), "amostras_estudo")
+
+    def test_com_precisao_incompleta_o_card_leva_as_replicas(self):
+        Replica.objects.filter(nivel__estudo=self.estudo, corrida__gte=4).delete()
+
+        self.assertEqual(self.estudo.tela_da_proxima_acao(), "replicas_estudo")
+
+    def test_o_cabecalho_nao_diz_quarenta_e_um_de_quarenta(self):
+        # Passar do mínimo não é erro, e "41 de 40" lia como se fosse.
+        AmostraComparacao.objects.create(
+            estudo=self.estudo, identificacao="AM-041",
+            valor_comparacao=Decimal("1.0"), valor_teste=Decimal("1.0"),
+        )
+
+        resposta = self.client.get(self.url)
+
+        self.assertContains(resposta, "11 amostras lançadas")
+        self.assertNotContains(resposta, "de 40 lançadas")
+
+    def test_o_cabecalho_diz_quanto_falta_para_o_minimo(self):
+        resposta = self.client.get(self.url)
+
+        self.assertContains(resposta, "Faltam 30 para o mínimo do EP09")
+
+
+class TestLeituraDeNumeroBrasileiro(TestCase):
+    """Como o programa lê um número copiado de planilha em português.
+
+    O Excel em pt-BR copia 1234,56 como “1.234,56”. Trocar só a vírgula por
+    ponto produzia “1.234.56”, recusado como não-numérico — ou seja, glicose,
+    CK e ferritina, que passam de mil na rotina, não entravam.
+    """
+
+    def test_virgula_decimal(self):
+        self.assertEqual(servicos.converter_numero("0,930"), Decimal("0.930"))
+
+    def test_ponto_de_milhar_com_virgula_decimal(self):
+        self.assertEqual(servicos.converter_numero("1.234,56"), Decimal("1234.56"))
+        self.assertEqual(servicos.converter_numero("1.234.567,89"), Decimal("1234567.89"))
+
+    def test_formato_americano_tambem_e_lido(self):
+        self.assertEqual(servicos.converter_numero("1,234.56"), Decimal("1234.56"))
+
+    def test_zero_a_esquerda_nao_e_milhar(self):
+        # "0.930" só pode ser 0,930: nenhum separador de milhar segue um zero.
+        self.assertEqual(servicos.converter_numero("0.930"), Decimal("0.930"))
+
+    def test_quatro_digitos_antes_do_ponto_nao_sao_milhar(self):
+        # O milhar sairia como "1.234.567"; então "1234.567" é decimal.
+        self.assertEqual(servicos.converter_numero("1234.567"), Decimal("1234.567"))
+
+    def test_o_caso_ambiguo_e_recusado_em_vez_de_adivinhado(self):
+        # "1.500" tanto pode ser 1,5 quanto 1500. Adivinhar errado aqui não dá
+        # um número estranho: dá um número mil vezes maior num laudo assinado.
+        with self.assertRaises(servicos.NumeroAmbiguo):
+            servicos.converter_numero("1.500")
+
+    def test_a_recusa_explica_as_duas_leituras(self):
+        try:
+            servicos.converter_numero("12.345")
+        except servicos.NumeroAmbiguo as ambiguo:
+            self.assertIn("12,345", str(ambiguo))
+            self.assertIn("12345", str(ambiguo))
+        else:
+            self.fail("deveria ter recusado")
+
+    def test_a_grade_recusa_o_ambiguo_com_a_linha(self):
+        laboratorio = montar_laboratorio("Lab A", "11.111.111/0001-11")
+        usuario = Usuario.objects.create_user(
+            username="analista", password="senha-longa-de-teste", laboratorio=laboratorio
+        )
+        estudo = montar_estudo(laboratorio, usuario)
+        self.client.force_login(usuario)
+
+        resposta = self.client.post(
+            reverse("amostras_estudo", args=[estudo.pk]),
+            {"total": "40", "amostra_11_comparacao": "1.500", "amostra_11_teste": "1,6"},
+            follow=True,
+        )
+
+        self.assertContains(resposta, "Linha 11")
+        self.assertContains(resposta, "pode ser")
+
+    def test_valores_acima_de_mil_entram_pela_grade(self):
+        # Glicose de 1.234 mg/dL vinda da planilha: antes era recusada.
+        laboratorio = montar_laboratorio("Lab A", "11.111.111/0001-11")
+        usuario = Usuario.objects.create_user(
+            username="analista", password="senha-longa-de-teste", laboratorio=laboratorio
+        )
+        estudo = montar_estudo(laboratorio, usuario)
+        self.client.force_login(usuario)
+
+        self.client.post(
+            reverse("amostras_estudo", args=[estudo.pk]),
+            {"total": "40", "amostra_11_comparacao": "1.234,50", "amostra_11_teste": "1.240,00"},
+        )
+
+        gravada = AmostraComparacao.objects.get(estudo=estudo, identificacao="AM-011")
+        self.assertEqual(gravada.valor_comparacao, Decimal("1234.5000"))

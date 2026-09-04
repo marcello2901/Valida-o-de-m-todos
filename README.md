@@ -116,6 +116,17 @@ Nada disso precisa de banco de dados instalado: em desenvolvimento o sistema
 cria sozinho um arquivo `banco-local.sqlite3`. O PostgreSQL só entra em
 produção.
 
+## Como colocar no ar
+
+O passo a passo está em [DEPLOY.md](DEPLOY.md) — escrito para quem nunca
+publicou um site, no plano gratuito do Render.
+
+Três limites do plano gratuito que decidem se ele serve para você: o site dorme
+depois de 15 minutos sem acesso, o banco de dados é apagado depois de 30 dias, e
+os servidores ficam fora do Brasil. Serve para testar e demonstrar. **Não serve
+para dado real de paciente** — identificação de amostra é dado pessoal sensível
+pela LGPD.
+
 ## Como atualizar para a versão mais nova
 
 O código muda no GitHub. A cópia na sua máquina **não se atualiza sozinha** —

@@ -89,6 +89,12 @@ class Usuario(AbstractUser):
         nome = self.get_full_name() or self.username
         return f"{nome} ({self.laboratorio})" if self.laboratorio else nome
 
+    _FUNCAO_CURTA = {ANALISTA: "Analista", RESPONSAVEL: "Responsável técnico", GESTOR: "Gestor"}
+
+    def funcao_curta(self) -> str:
+        """Só o nome da função. O rótulo longo explica o que ela faz."""
+        return self._FUNCAO_CURTA.get(self.funcao, self.funcao)
+
     def pode_assinar_relatorio(self) -> bool:
         """Só o responsável técnico libera um relatório de validação."""
         return self.funcao == self.RESPONSAVEL

@@ -1,0 +1,30 @@
+{% extends "admin/base.html" %}
+{% load static %}
+
+{% comment %}
+  O painel passa a usar a mesma paleta e a mesma tipografia das telas do
+  programa, e ganha o caminho de volta ao quadro. Só o cabeçalho e a folha de
+  estilo são tocados: a marcação do painel continua a do Django, que é o que
+  faz a atualização de versão continuar sendo indolor.
+{% endcomment %}
+
+{% block title %}{{ title }} | Validação de métodos{% endblock %}
+
+{% block extrastyle %}
+{{ block.super }}
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@500;600;700&display=swap">
+<link rel="stylesheet" href="{% static 'css/painel.css' %}">
+{% endblock %}
+
+{% block branding %}
+<h1 id="site-name">
+  <span class="marca-programa">V</span>
+  <a href="{% url 'admin:index' %}">Cadastros</a>
+  <a href="{% url 'quadro' %}" class="voltar-programa">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 6l-6 6 6 6"/></svg>
+    Voltar ao quadro
+  </a>
+</h1>
+{% endblock %}
+
+{% block nav-global %}{% endblock %}

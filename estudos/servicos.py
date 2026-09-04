@@ -667,7 +667,10 @@ def salvar_grade(estudo, dados) -> dict:
                     continue
 
                 try:
-                    valor = Decimal(bruto.replace(",", "."))
+                    valor = converter_numero(bruto)
+                except NumeroAmbiguo as ambiguo:
+                    erros.append(f"Nível {nivel.numero}, réplica {posicao}: {ambiguo}")
+                    continue
                 except (InvalidOperation, ValueError):
                     erros.append(
                         f"Nível {nivel.numero}, réplica {posicao}: "
@@ -717,7 +720,7 @@ def acrescentar_nivel(estudo, controle_id: str, media_alvo: str = "") -> str:
     alvo = None
     if media_alvo.strip():
         try:
-            alvo = Decimal(media_alvo.strip().replace(",", "."))
+            alvo = converter_numero(media_alvo)
         except (InvalidOperation, ValueError):
             return f"“{media_alvo}” não é um número válido para a média interlaboratorial."
 
@@ -729,3 +732,220 @@ def acrescentar_nivel(estudo, controle_id: str, media_alvo: str = "") -> str:
         media_interlaboratorial=alvo,
     )
     return ""
+
+
+# --- Grade de lançamento de amostras pareadas -------------------------------
+#
+# Mesma ideia da grade de réplicas, com três campos por linha em vez de um. Já
+# nasce com o mínimo do EP09 — 40 amostras — para o laboratório saber de saída
+# quanto o procedimento pede, em vez de descobrir no fim que faltou.
+
+AMOSTRAS_POR_PISTA = 20
+PASSO_DE_LINHAS = 10
+MINIMO_AMOSTRAS_GRADE = comp.MINIMO_AMOSTRAS_EP09
+
+
+def _identificacao_sugerida(posicao: int) -> str:
+    return f"AM-{posicao:03d}"
+
+
+def montar_grade_amostras(estudo, linhas_pedidas: int = 0) -> dict:
+    """Linhas de amostra pareada, repartidas em pistas de 20.
+
+    As amostras já lançadas ocupam as primeiras posições, na ordem em que estão
+    cadastradas; o resto vem em branco. O número de linhas nunca encolhe abaixo
+    do que já foi digitado — apagar dado por causa de um número na barra de
+    endereço seria inaceitável.
+    """
+    existentes = list(estudo.amostras_comparacao.order_by("identificacao"))
+    total = max(comp.MINIMO_AMOSTRAS_EP09, len(existentes), linhas_pedidas)
+
+    linhas = []
+    for posicao in range(1, total + 1):
+        amostra = existentes[posicao - 1] if posicao <= len(existentes) else None
+        linhas.append(
+            {
+                "posicao": posicao,
+                "amostra": amostra,
+                "identificacao": amostra.identificacao if amostra else "",
+                "sugestao": _identificacao_sugerida(posicao),
+                "comparacao": amostra.valor_comparacao if amostra else None,
+                "teste": amostra.valor_teste if amostra else None,
+                "travada": bool(amostra and amostra.excluida),
+                "justificativa": amostra.justificativa_exclusao if amostra else "",
+            }
+        )
+
+    pistas = [
+        linhas[inicio : inicio + AMOSTRAS_POR_PISTA]
+        for inicio in range(0, len(linhas), AMOSTRAS_POR_PISTA)
+    ]
+    return {"total": total, "pistas": pistas, "minimo": comp.MINIMO_AMOSTRAS_EP09}
+
+
+class NumeroAmbiguo(ValueError):
+    """O texto pode ser lido de dois jeitos, com mil vezes de diferença."""
+
+
+def converter_numero(bruto: str) -> Decimal:
+    """Lê um número como um laboratório brasileiro o escreve.
+
+    O Excel em português copia mil e duzentos e trinta e quatro vírgula cinco
+    seis como ``1.234,56``. Trocar só a vírgula por ponto produzia ``1.234.56``,
+    que o Decimal recusa — ou seja, glicose, CK e ferritina, que passam de mil
+    na rotina, simplesmente não entravam.
+
+    Quando há os dois separadores, o último é o decimal e o outro é o de milhar.
+    Vírgula sozinha é sempre decimal. Ponto sozinho com exatamente três casas
+    depois é **ambíguo** — ``1.500`` tanto pode ser 1,5 quanto 1500 — e aí a
+    função recusa em vez de escolher. Escolher errado aqui não dá um número
+    estranho: dá um número mil vezes maior num relatório assinado.
+    """
+    texto = bruto.strip().replace(" ", "").replace("\u00a0", "")
+    tem_ponto = "." in texto
+    tem_virgula = "," in texto
+
+    if tem_ponto and tem_virgula:
+        if texto.rfind(",") > texto.rfind("."):
+            texto = texto.replace(".", "").replace(",", ".")
+        else:
+            texto = texto.replace(",", "")
+    elif tem_virgula:
+        texto = texto.replace(",", ".")
+    elif tem_ponto:
+        # Só é ambíguo o que caberia como grupo de milhar: 1 a 3 dígitos antes
+        # do ponto, sem zero à esquerda. "0.930" não tem leitura dupla — nenhum
+        # separador de milhar vem depois de um zero — e "1234.567" também não,
+        # porque o milhar sairia como "1.234.567".
+        inteiro, _, fracao = texto.rpartition(".")
+        cabeca = inteiro.lstrip("+-")
+        parece_milhar = (
+            len(fracao) == 3
+            and cabeca.isdigit()
+            and 1 <= len(cabeca) <= 3
+            and not cabeca.startswith("0")
+        )
+        if parece_milhar:
+            raise NumeroAmbiguo(
+                f"“{bruto.strip()}” pode ser {inteiro},{fracao} ou {inteiro}{fracao}. "
+                "Use vírgula para o decimal, ou tire o separador de milhar."
+            )
+
+    return Decimal(texto)
+
+
+def _numero(bruto: str) -> Decimal:
+    return converter_numero(bruto)
+
+
+def salvar_grade_amostras(estudo, dados, total: int) -> dict:
+    """Grava a grade de amostras pareadas de uma vez.
+
+    Regras que valem a pena estar explícitas:
+
+    - Linha com os dois valores em branco apaga a amostra daquela posição.
+    - Linha com **um** valor só é erro, não meia amostra: um par incompleto não
+      entra em regressão nenhuma, e gravá-lo silenciosamente deixaria o estudo
+      com uma amostra que não conta e ninguém sabe por quê.
+    - Identificação em branco recebe a sugerida (AM-007). Ninguém deveria ter de
+      digitar quarenta identificadores sequenciais à mão.
+    - Identificação repetida é recusada antes de o banco reclamar, com a
+      mensagem dizendo quais linhas colidem.
+    """
+    from .models import AmostraComparacao
+
+    erros: list[str] = []
+    a_gravar: list[dict] = []
+    a_apagar: list = []
+    vistos: dict[str, int] = {}
+
+    existentes = list(estudo.amostras_comparacao.order_by("identificacao"))
+
+    for posicao in range(1, total + 1):
+        amostra = existentes[posicao - 1] if posicao <= len(existentes) else None
+        if amostra and amostra.excluida:
+            continue  # Registro de descarte: a grade não mexe.
+
+        campo_comp = f"amostra_{posicao}_comparacao"
+        campo_teste = f"amostra_{posicao}_teste"
+        if campo_comp not in dados and campo_teste not in dados:
+            continue  # Envio parcial: o que não veio não é "apague".
+
+        bruto_comp = (dados.get(campo_comp) or "").strip()
+        bruto_teste = (dados.get(campo_teste) or "").strip()
+        identificacao = (dados.get(f"amostra_{posicao}_id") or "").strip()
+
+        if not bruto_comp and not bruto_teste:
+            if amostra:
+                a_apagar.append(amostra)
+            continue
+
+        if not bruto_comp or not bruto_teste:
+            erros.append(
+                f"Linha {posicao}: a amostra precisa do resultado nos dois sistemas."
+            )
+            continue
+
+        try:
+            valor_comp = converter_numero(bruto_comp)
+            valor_teste = converter_numero(bruto_teste)
+        except NumeroAmbiguo as ambiguo:
+            erros.append(f"Linha {posicao}: {ambiguo}")
+            continue
+        except (InvalidOperation, ValueError):
+            erros.append(f"Linha {posicao}: valor não numérico.")
+            continue
+
+        identificacao = identificacao or _identificacao_sugerida(posicao)
+        if identificacao in vistos:
+            erros.append(
+                f"Linha {posicao}: identificação “{identificacao}” repete a da "
+                f"linha {vistos[identificacao]}."
+            )
+            continue
+        vistos[identificacao] = posicao
+
+        a_gravar.append(
+            {
+                "amostra": amostra,
+                "identificacao": identificacao,
+                "comparacao": valor_comp,
+                "teste": valor_teste,
+            }
+        )
+
+    if erros:
+        return {"gravadas": 0, "apagadas": 0, "erros": erros}
+
+    gravadas = 0
+    with transaction.atomic():
+        for amostra in a_apagar:
+            amostra.delete()
+
+        for item in a_gravar:
+            amostra = item["amostra"]
+            if amostra is None:
+                AmostraComparacao.objects.create(
+                    estudo=estudo,
+                    identificacao=item["identificacao"],
+                    valor_comparacao=item["comparacao"],
+                    valor_teste=item["teste"],
+                )
+                gravadas += 1
+                continue
+
+            mudou = (
+                amostra.identificacao != item["identificacao"]
+                or amostra.valor_comparacao != item["comparacao"]
+                or amostra.valor_teste != item["teste"]
+            )
+            if mudou:
+                amostra.identificacao = item["identificacao"]
+                amostra.valor_comparacao = item["comparacao"]
+                amostra.valor_teste = item["teste"]
+                amostra.save(
+                    update_fields=["identificacao", "valor_comparacao", "valor_teste"]
+                )
+                gravadas += 1
+
+    return {"gravadas": gravadas, "apagadas": len(a_apagar), "erros": []}

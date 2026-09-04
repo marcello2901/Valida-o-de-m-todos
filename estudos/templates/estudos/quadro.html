@@ -8,31 +8,17 @@
     flex-grow: 1; padding: 18px 22px; display: grid;
     grid-template-columns: repeat(5, minmax(230px, 1fr)); gap: 14px; align-items: start;
   }
-  .coluna { background: var(--leito); border-radius: 12px; padding: 11px 10px; display: flex; flex-direction: column; gap: 9px; }
-  .coluna > header { display: flex; align-items: center; gap: 7px; padding: 0 3px 2px; }
-  .ponto { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
-  .coluna h2 { font-size: 12px; font-weight: 600; color: var(--tinta-2); margin: 0; }
-  .conta { font-size: 11px; color: var(--tinta-3); background: var(--trilho); border-radius: 20px; padding: 1px 7px; }
+  /* Coluna do quadro. O leito, o cabeçalho com ponto e contagem, a ficha e o
+     pé vêm do base.html: é daqui que o resto do programa copia o desenho. */
+  .coluna { display: flex; flex-direction: column; gap: 9px; }
+  .coluna .grupo-titulo { padding: 0 3px 2px; margin-bottom: 0; }
 
-  .validacao {
-    display: block; background: var(--superficie); border: 1px solid var(--linha);
-    border-radius: 10px; padding: 12px 13px; box-shadow: 0 1px 2px rgba(11,11,11,.035);
-    color: var(--tinta); transition: border-color .13s ease, box-shadow .13s ease;
-  }
-  .validacao:hover { border-color: var(--borda); box-shadow: 0 2px 8px rgba(11,11,11,.07); color: var(--tinta); }
+  .validacao { border-radius: 10px; padding: 12px 13px; }
   .validacao h3 { font-size: 15px; font-weight: 600; margin: 0; }
   .validacao .onde { font-size: 11.5px; color: var(--tinta-3); margin: 2px 0 0; }
   .etiquetas { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; }
   .medida { display: flex; justify-content: space-between; font-size: 11px; color: var(--tinta-2); margin: 8px 0 5px; }
-  .rodape {
-    margin-top: 11px; padding-top: 9px; border-top: 1px solid var(--grade);
-    display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--tinta-3);
-  }
   .rodape--acao { color: var(--acento); font-weight: 600; }
-  .numeros { display: flex; gap: 14px; margin-top: 12px; }
-  .numeros dt { font-size: 10px; color: var(--tinta-3); text-transform: uppercase; letter-spacing: .04em; }
-  .numeros dd { margin: 0; font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums;
-                font-family: "Instrument Sans", system-ui, sans-serif; }
   .coluna--vazia { font-size: 12px; color: var(--tinta-3); padding: 8px 4px; }
 </style>
 {% endblock %}
@@ -56,15 +42,15 @@
 
 <div class="quadro">
   {% for coluna in colunas %}
-  <section class="coluna">
-    <header>
+  <section class="leito coluna">
+    <header class="grupo-titulo">
       <span class="ponto" style="background: {{ coluna.cor }}"></span>
       <h2>{{ coluna.nome }}</h2>
-      <span class="conta num">{{ coluna.cards|length }}</span>
+      <span class="conta">{{ coluna.cards|length }}</span>
     </header>
 
     {% for card in coluna.cards %}
-    <a class="validacao" href="{% if coluna.chave == 'coletando' or coluna.chave == 'rascunho' %}{% url 'replicas_estudo' card.estudo.pk %}{% else %}{% url 'resultado_estudo' card.estudo.pk %}{% endif %}">
+    <a class="cartao ficha validacao" href="{% if coluna.chave == 'coletando' or coluna.chave == 'rascunho' %}{% url card.destino card.estudo.pk %}{% else %}{% url 'resultado_estudo' card.estudo.pk %}{% endif %}">
       <div style="display: flex; align-items: start; justify-content: space-between; gap: 8px">
         <div style="min-width: 0">
           <h3 class="display">{{ card.estudo.mensurando.nome }}</h3>
@@ -97,7 +83,7 @@
           total; nesses casos o card mostra só a data, sem traço no lugar do
           número — traço ao lado de "Aprovado" parece dado perdido.
         {% endcomment %}
-        <dl class="numeros">
+        <dl class="pares">
           {% if card.erro_total %}
           <div><dt>Erro total</dt><dd class="num">{{ card.erro_total|floatformat:1 }}%</dd></div>
           {% endif %}
@@ -116,7 +102,7 @@
         {% endif %}
       {% endif %}
 
-      <div class="rodape {% if coluna.chave == 'coletando' or coluna.chave == 'pronto' %}rodape--acao{% endif %}">
+      <div class="pe {% if coluna.chave == 'coletando' or coluna.chave == 'pronto' %}rodape--acao{% endif %}">
         {% if coluna.chave == "coletando" or coluna.chave == "pronto" %}
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0"><path d="M5 12h13M13 6l6 6-6 6"/></svg>
         {% endif %}

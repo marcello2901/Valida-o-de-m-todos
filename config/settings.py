@@ -34,6 +34,14 @@ CSRF_TRUSTED_ORIGINS = [
     if origem.strip()
 ]
 
+# O Render publica o endereço do site nesta variável. Ler daqui evita o erro
+# mais comum de primeira implantação: subir tudo certo e receber
+# "DisallowedHost" porque ninguém sabia qual endereço digitar na configuração.
+ENDERECO_DO_RENDER = os.environ.get("RENDER_EXTERNAL_HOSTNAME", "").strip()
+if ENDERECO_DO_RENDER:
+    ALLOWED_HOSTS.append(ENDERECO_DO_RENDER)
+    CSRF_TRUSTED_ORIGINS.append(f"https://{ENDERECO_DO_RENDER}")
+
 if not DEBUG:
     if SECRET_KEY == CHAVE_DESENVOLVIMENTO:
         raise ImproperlyConfigured(
@@ -119,9 +127,13 @@ AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
 
-LOGIN_URL = "admin:login"
-LOGIN_REDIRECT_URL = "/admin/"
-LOGOUT_REDIRECT_URL = "/admin/"
+# A entrada do programa é a tela do programa, não a do painel administrativo.
+# O login do painel exige conta de equipe (is_staff): apontar LOGIN_URL para ele
+# deixava qualquer analista de laboratório de fora — ele batia no formulário e
+# recebia "insira um usuário e senha para uma conta de equipe".
+LOGIN_URL = "entrar"
+LOGIN_REDIRECT_URL = "/quadro/"
+LOGOUT_REDIRECT_URL = "entrar"
 
 # Sessão expira em 12 horas — um turno de trabalho.
 SESSION_COOKIE_AGE = 60 * 60 * 12
@@ -138,9 +150,14 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
+# A folha que veste o painel administrativo com a identidade do programa.
+STATICFILES_DIRS = [BASE_DIR / "static"]
 STORAGES = {
     "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
     "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"},
 }
+
+# Troca o armazenamento de estáticos durante os testes. O porquê está no módulo.
+TEST_RUNNER = "config.testes.Executor"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"

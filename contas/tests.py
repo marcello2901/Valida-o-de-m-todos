@@ -5,8 +5,13 @@ fato de que o pacote completo cobre os módulos isolados sem precisar de três
 assinaturas separadas.
 """
 
+import io
+import os
 from datetime import timedelta
+from unittest import mock
 
+from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
@@ -177,3 +182,174 @@ class TestConfiguracoes(TestCase):
         self.client.logout()
 
         self.assertEqual(self.client.get(self.url).status_code, 302)
+
+
+class TestEntrada(TestCase):
+    """A porta de entrada do programa.
+
+    Existe por um defeito que travava o produto inteiro: LOGIN_URL apontava para
+    o login do painel administrativo, que exige conta de equipe. Um analista de
+    laboratório batia no formulário e recebia "insira um usuário e senha para
+    uma conta de equipe" — ou seja, ninguém que não fosse da equipe interna
+    conseguia usar o sistema.
+    """
+
+    def setUp(self):
+        self.laboratorio = Laboratorio.objects.create(
+            razao_social="Lab A", cnpj="11.111.111/0001-11"
+        )
+        self.senha = "senha-longa-de-teste"
+        self.usuario = Usuario.objects.create_user(
+            username="analista", password=self.senha,
+            laboratorio=self.laboratorio, funcao=Usuario.ANALISTA,
+        )
+
+    def test_analista_sem_conta_de_equipe_entra_no_programa(self):
+        self.assertFalse(self.usuario.is_staff)
+
+        resposta = self.client.post(
+            reverse("entrar"), {"username": "analista", "password": self.senha}
+        )
+
+        self.assertRedirects(resposta, "/quadro/")
+
+    def test_senha_errada_volta_com_recado(self):
+        resposta = self.client.post(
+            reverse("entrar"), {"username": "analista", "password": "errada"}
+        )
+
+        self.assertEqual(resposta.status_code, 200)
+        self.assertContains(resposta, "Usuário ou senha incorretos")
+
+    def test_quem_nao_entrou_e_mandado_para_a_tela_de_entrada(self):
+        resposta = self.client.get(reverse("quadro"))
+
+        self.assertIn(reverse("entrar"), resposta["Location"])
+
+    def test_depois_de_entrar_o_quadro_abre(self):
+        self.client.login(username="analista", password=self.senha)
+
+        self.assertEqual(self.client.get(reverse("quadro")).status_code, 200)
+
+    def test_da_para_sair(self):
+        self.client.login(username="analista", password=self.senha)
+
+        resposta = self.client.post(reverse("sair"))
+
+        self.assertRedirects(resposta, reverse("entrar"))
+        self.assertEqual(self.client.get(reverse("quadro")).status_code, 302)
+
+    def test_o_trilho_oferece_a_saida(self):
+        self.client.login(username="analista", password=self.senha)
+
+        resposta = self.client.get(reverse("quadro"))
+
+        self.assertContains(resposta, reverse("sair"))
+
+
+class TestRotulosCurtos(TestCase):
+    """Nenhum rótulo de cartão pode terminar em reticências.
+
+    Quatro telas seguidas nasceram com ``truncatewords`` cortando um rótulo no
+    meio — "Precisão ...", "Sistema ...", "Analista ...". Cortar não é encurtar:
+    "Sistema ..." não distingue o sistema em teste do de comparação, que é a
+    única informação que o rótulo carrega. Estes testes fixam nomes curtos de
+    verdade, escritos, no lugar do corte automático.
+    """
+
+    def test_funcao_do_usuario_tem_nome_curto(self):
+        usuario = Usuario(funcao=Usuario.RESPONSAVEL)
+
+        self.assertEqual(usuario.funcao_curta(), "Responsável técnico")
+        self.assertNotIn("…", usuario.funcao_curta())
+
+    def test_papel_do_sistema_distingue_teste_de_comparacao(self):
+        teste = SistemaAnalitico(papel=SistemaAnalitico.TESTE)
+        comparacao = SistemaAnalitico(papel=SistemaAnalitico.COMPARACAO)
+
+        self.assertNotEqual(teste.papel_curto(), comparacao.papel_curto())
+
+    def test_modulo_da_assinatura_tem_nome_curto(self):
+        assinatura = Assinatura(modulo=Assinatura.COMPLETO)
+
+        self.assertEqual(assinatura.modulo_curto(), "Precisão + Comparabilidade")
+
+    def test_nenhum_template_corta_rotulo_com_truncatewords(self):
+        # Guarda o hábito, não só as ocorrências de hoje.
+        import pathlib
+
+        raiz = pathlib.Path(__file__).resolve().parent.parent
+        cortados = [
+            str(caminho.relative_to(raiz))
+            for caminho in raiz.rglob("*.html")
+            if "truncatewords" in caminho.read_text(encoding="utf-8")
+        ]
+
+        self.assertEqual(cortados, [], "use um rótulo curto de verdade, não truncatewords")
+
+
+class TestContaDeAdministracao(TestCase):
+    """O comando que cria a conta de administração na implantação.
+
+    Existe porque o plano gratuito da hospedagem não tem terminal no servidor:
+    sem ele o site sobe sem nenhum usuário e ninguém entra. Como roda a cada
+    implantação, precisa ser seguro de repetir.
+    """
+
+    def rodar(self, **variaveis):
+        saida = io.StringIO()
+        with mock.patch.dict(os.environ, variaveis, clear=False):
+            call_command("criar_admin", stdout=saida)
+        return saida.getvalue()
+
+    def test_cria_a_conta_na_primeira_vez(self):
+        self.rodar(ADMIN_USUARIO="chefe", ADMIN_SENHA="senha-longa-de-verdade")
+
+        conta = Usuario.objects.get(username="chefe")
+        self.assertTrue(conta.is_staff)
+        self.assertTrue(conta.is_superuser)
+        self.assertTrue(conta.check_password("senha-longa-de-verdade"))
+
+    def test_rodar_de_novo_atualiza_em_vez_de_falhar(self):
+        # O comando roda a cada implantação; falhar na segunda pararia o deploy.
+        self.rodar(ADMIN_USUARIO="chefe", ADMIN_SENHA="senha-longa-de-verdade")
+
+        self.rodar(ADMIN_USUARIO="chefe", ADMIN_SENHA="outra-senha-bem-longa")
+
+        self.assertEqual(Usuario.objects.filter(username="chefe").count(), 1)
+        self.assertTrue(
+            Usuario.objects.get(username="chefe").check_password("outra-senha-bem-longa")
+        )
+
+    def test_sem_as_variaveis_nao_faz_nada(self):
+        # Quem roda na própria máquina não deve ganhar uma conta surpresa.
+        saida = self.rodar(ADMIN_USUARIO="", ADMIN_SENHA="")
+
+        self.assertEqual(Usuario.objects.count(), 0)
+        self.assertIn("nenhuma conta criada", saida)
+
+    def test_senha_curta_e_recusada(self):
+        # É a senha do administrador de um sistema exposto na internet.
+        with self.assertRaises(CommandError):
+            self.rodar(ADMIN_USUARIO="chefe", ADMIN_SENHA="123")
+
+        self.assertFalse(Usuario.objects.filter(username="chefe").exists())
+
+
+class TestDadosDeExemplo(TestCase):
+    def test_recusa_rodar_fora_de_desenvolvimento(self):
+        # O comando cria um usuário de senha conhecida.
+        with self.settings(DEBUG=False):
+            with mock.patch.dict(os.environ, {"PERMITIR_DADOS_EXEMPLO": "0"}):
+                with self.assertRaises(CommandError):
+                    call_command("dados_exemplo", stdout=io.StringIO())
+
+    def test_a_liberacao_explicita_deixa_rodar_e_avisa(self):
+        with self.settings(DEBUG=False):
+            saida = io.StringIO()
+            with mock.patch.dict(os.environ, {"PERMITIR_DADOS_EXEMPLO": "1"}):
+                call_command("dados_exemplo", stdout=saida)
+
+        self.assertIn("ATENÇÃO", saida.getvalue())
+        self.assertIn("não deve receber dado real", saida.getvalue())
+        self.assertTrue(Usuario.objects.filter(username="analista.demo").exists())
