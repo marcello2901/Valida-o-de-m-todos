@@ -50,7 +50,7 @@
     </header>
 
     {% for card in coluna.cards %}
-    <a class="cartao ficha validacao" href="{% if coluna.chave == 'coletando' or coluna.chave == 'rascunho' %}{% url 'replicas_estudo' card.estudo.pk %}{% else %}{% url 'resultado_estudo' card.estudo.pk %}{% endif %}">
+    <a class="cartao ficha validacao" href="{% if coluna.chave == 'coletando' or coluna.chave == 'rascunho' %}{% url card.destino card.estudo.pk %}{% else %}{% url 'resultado_estudo' card.estudo.pk %}{% endif %}">
       <div style="display: flex; align-items: start; justify-content: space-between; gap: 8px">
         <div style="min-width: 0">
           <h3 class="display">{{ card.estudo.mensurando.nome }}</h3>

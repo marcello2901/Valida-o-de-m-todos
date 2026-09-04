@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+
+{% block titulo %}Lançar amostras — {{ estudo.mensurando.nome }}{% endblock %}
+
+{% block estilo %}
+<style>
+  /* Mesma metáfora da grade de réplicas: pistas lado a lado, cartão por cima.
+     Aqui cada linha tem três campos — identificação e os dois resultados. */
+  .pistas { display: flex; gap: 14px; align-items: start; flex-wrap: wrap; }
+  .pista { flex: 1 1 380px; min-width: 356px; max-width: 620px; padding: 0; overflow: hidden; }
+
+  .cabeca {
+    display: flex; align-items: center; gap: 8px;
+    padding: 9px 12px; border-bottom: 1px solid var(--grade); background: var(--faixa);
+    font-size: 10px; font-weight: 700; color: var(--tinta-3);
+    text-transform: uppercase; letter-spacing: .06em;
+  }
+  .cabeca .col-id { width: 96px; flex-shrink: 0; }
+  .cabeca .col-valor { flex: 1; text-align: right; }
+
+  .linhas { padding: 6px 12px 12px; }
+  .linha { display: flex; align-items: center; gap: 7px; padding: 2px 0; }
+  .ordem {
+    width: 20px; flex-shrink: 0; font-size: 10.5px; color: var(--tinta-3);
+    text-align: right; font-variant-numeric: tabular-nums;
+  }
+  .linha .id { width: 90px; flex-shrink: 0; }
+  .linha .valor { flex: 1; text-align: right; }
+  .seta-par { color: var(--tinta-3); flex-shrink: 0; }
+  .travada { font-size: 10.5px; color: var(--atencao-tinta); flex-shrink: 0; }
+
+  .rodape-fixo {
+    position: sticky; bottom: 0; margin-top: 16px; padding: 12px 0 4px;
+    background: linear-gradient(to top, var(--plano) 72%, transparent);
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  }
+</style>
+{% endblock %}
+
+{% block corpo %}
+<div class="barra">
+  <a href="{% url 'resultado_estudo' estudo.pk %}" class="botao" style="width: 34px; padding: 0; justify-content: center" title="Voltar ao resultado">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 6l-6 6 6 6"/></svg>
+  </a>
+  <div>
+    <h1 class="display">Lançar amostras pareadas</h1>
+    <p class="sub">
+      {{ estudo.mensurando.nome }} &middot;
+      {{ estudo.sistema_comparacao.equipamento|default:"método de comparação" }} &rarr;
+      {{ estudo.sistema_teste.equipamento }} &middot;
+      {{ andamento.comparacao_feita }} amostra{{ andamento.comparacao_feita|pluralize }} lançada{{ andamento.comparacao_feita|pluralize }}
+    </p>
+  </div>
+  <div class="cresce"></div>
+  {% comment %}
+    Passar do mínimo não é erro — "41 de 40" lia como se fosse. O selo diz se o
+    mínimo do EP09 foi atendido, e quanto falta quando não foi.
+  {% endcomment %}
+  {% if andamento.comparacao_faltam %}
+    <span class="selo selo--atencao">Faltam {{ andamento.comparacao_faltam }} para o mínimo do EP09</span>
+  {% else %}
+    <span class="selo selo--neutro">Mínimo do EP09 atendido</span>
+  {% endif %}
+  <span class="selo selo--neutro">{{ estudo.mensurando.unidade_medida }}</span>
+</div>
+
+<div class="area">
+  {% comment %}
+    A grade abre com o mínimo do EP09. Dizer isso aqui é o que evita o estudo
+    chegar ao fim com 25 amostras e o relatório abrir com uma ressalva.
+  {% endcomment %}
+  <p class="nota" style="margin: 0 0 14px">
+    A tela abre com <strong>{{ grade.minimo }} linhas</strong> porque é o mínimo que o
+    CLSI EP09 pede, distribuídas ao longo da faixa analítica. Precisa de mais? O botão
+    no rodapé acrescenta {{ passo }} de cada vez.
+  </p>
+
+  <form method="post">
+    {% csrf_token %}
+    <input type="hidden" name="total" value="{{ grade.total }}">
+
+    <div class="pistas">
+      {% for pista in grade.pistas %}
+      <section class="cartao pista">
+        <div class="cabeca">
+          <span class="ordem">#</span>
+          <span class="col-id">Amostra</span>
+          <span class="col-valor">Comparação</span>
+          <span style="width: 16px"></span>
+          <span class="col-valor">Teste</span>
+        </div>
+        <div class="linhas">
+          {% for linha in pista %}
+          <div class="linha">
+            <span class="ordem">{{ linha.posicao }}</span>
+            {% if linha.travada %}
+              <input type="text" class="id" value="{{ linha.identificacao }}" disabled>
+              <input type="text" class="valor" value="{{ linha.comparacao }}" disabled>
+              <span class="seta-par">&rarr;</span>
+              <input type="text" class="valor" value="{{ linha.teste }}" disabled>
+              <span class="travada" title="{{ linha.justificativa }}">excluída</span>
+            {% else %}
+              <input type="text" class="id" name="amostra_{{ linha.posicao }}_id"
+                     value="{{ linha.identificacao }}" placeholder="{{ linha.sugestao }}"
+                     aria-label="Identificação da amostra {{ linha.posicao }}">
+              <input type="text" class="valor" inputmode="decimal"
+                     name="amostra_{{ linha.posicao }}_comparacao"
+                     value="{{ linha.comparacao|default_if_none:'' }}"
+                     aria-label="Resultado da amostra {{ linha.posicao }} no sistema de comparação">
+              <span class="seta-par" aria-hidden="true">&rarr;</span>
+              <input type="text" class="valor" inputmode="decimal"
+                     name="amostra_{{ linha.posicao }}_teste"
+                     value="{{ linha.teste|default_if_none:'' }}"
+                     aria-label="Resultado da amostra {{ linha.posicao }} no sistema em teste">
+            {% endif %}
+          </div>
+          {% endfor %}
+        </div>
+      </section>
+      {% endfor %}
+    </div>
+
+    <div class="rodape-fixo">
+      <button type="submit" class="botao botao--primario">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7"/></svg>
+        Salvar amostras
+      </button>
+      <button type="submit" name="acao" value="adicionar_linhas" class="botao">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        Mais {{ passo }} linhas
+      </button>
+      <span class="nota">
+        A identificação em branco recebe a sugerida. Uma amostra só conta com os
+        dois resultados preenchidos.
+      </span>
+    </div>
+  </form>
+</div>
+{% endblock %}

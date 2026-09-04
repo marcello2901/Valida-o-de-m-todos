@@ -729,3 +729,167 @@ def acrescentar_nivel(estudo, controle_id: str, media_alvo: str = "") -> str:
         media_interlaboratorial=alvo,
     )
     return ""
+
+
+# --- Grade de lançamento de amostras pareadas -------------------------------
+#
+# Mesma ideia da grade de réplicas, com três campos por linha em vez de um. Já
+# nasce com o mínimo do EP09 — 40 amostras — para o laboratório saber de saída
+# quanto o procedimento pede, em vez de descobrir no fim que faltou.
+
+AMOSTRAS_POR_PISTA = 20
+PASSO_DE_LINHAS = 10
+MINIMO_AMOSTRAS_GRADE = comp.MINIMO_AMOSTRAS_EP09
+
+
+def _identificacao_sugerida(posicao: int) -> str:
+    return f"AM-{posicao:03d}"
+
+
+def montar_grade_amostras(estudo, linhas_pedidas: int = 0) -> dict:
+    """Linhas de amostra pareada, repartidas em pistas de 20.
+
+    As amostras já lançadas ocupam as primeiras posições, na ordem em que estão
+    cadastradas; o resto vem em branco. O número de linhas nunca encolhe abaixo
+    do que já foi digitado — apagar dado por causa de um número na barra de
+    endereço seria inaceitável.
+    """
+    existentes = list(estudo.amostras_comparacao.order_by("identificacao"))
+    total = max(comp.MINIMO_AMOSTRAS_EP09, len(existentes), linhas_pedidas)
+
+    linhas = []
+    for posicao in range(1, total + 1):
+        amostra = existentes[posicao - 1] if posicao <= len(existentes) else None
+        linhas.append(
+            {
+                "posicao": posicao,
+                "amostra": amostra,
+                "identificacao": amostra.identificacao if amostra else "",
+                "sugestao": _identificacao_sugerida(posicao),
+                "comparacao": amostra.valor_comparacao if amostra else None,
+                "teste": amostra.valor_teste if amostra else None,
+                "travada": bool(amostra and amostra.excluida),
+                "justificativa": amostra.justificativa_exclusao if amostra else "",
+            }
+        )
+
+    pistas = [
+        linhas[inicio : inicio + AMOSTRAS_POR_PISTA]
+        for inicio in range(0, len(linhas), AMOSTRAS_POR_PISTA)
+    ]
+    return {"total": total, "pistas": pistas, "minimo": comp.MINIMO_AMOSTRAS_EP09}
+
+
+def _numero(bruto: str):
+    """Converte texto digitado em Decimal, aceitando vírgula decimal."""
+    return Decimal(bruto.replace(",", "."))
+
+
+def salvar_grade_amostras(estudo, dados, total: int) -> dict:
+    """Grava a grade de amostras pareadas de uma vez.
+
+    Regras que valem a pena estar explícitas:
+
+    - Linha com os dois valores em branco apaga a amostra daquela posição.
+    - Linha com **um** valor só é erro, não meia amostra: um par incompleto não
+      entra em regressão nenhuma, e gravá-lo silenciosamente deixaria o estudo
+      com uma amostra que não conta e ninguém sabe por quê.
+    - Identificação em branco recebe a sugerida (AM-007). Ninguém deveria ter de
+      digitar quarenta identificadores sequenciais à mão.
+    - Identificação repetida é recusada antes de o banco reclamar, com a
+      mensagem dizendo quais linhas colidem.
+    """
+    from .models import AmostraComparacao
+
+    erros: list[str] = []
+    a_gravar: list[dict] = []
+    a_apagar: list = []
+    vistos: dict[str, int] = {}
+
+    existentes = list(estudo.amostras_comparacao.order_by("identificacao"))
+
+    for posicao in range(1, total + 1):
+        amostra = existentes[posicao - 1] if posicao <= len(existentes) else None
+        if amostra and amostra.excluida:
+            continue  # Registro de descarte: a grade não mexe.
+
+        campo_comp = f"amostra_{posicao}_comparacao"
+        campo_teste = f"amostra_{posicao}_teste"
+        if campo_comp not in dados and campo_teste not in dados:
+            continue  # Envio parcial: o que não veio não é "apague".
+
+        bruto_comp = (dados.get(campo_comp) or "").strip()
+        bruto_teste = (dados.get(campo_teste) or "").strip()
+        identificacao = (dados.get(f"amostra_{posicao}_id") or "").strip()
+
+        if not bruto_comp and not bruto_teste:
+            if amostra:
+                a_apagar.append(amostra)
+            continue
+
+        if not bruto_comp or not bruto_teste:
+            erros.append(
+                f"Linha {posicao}: a amostra precisa do resultado nos dois sistemas."
+            )
+            continue
+
+        try:
+            valor_comp = _numero(bruto_comp)
+            valor_teste = _numero(bruto_teste)
+        except (InvalidOperation, ValueError):
+            erros.append(f"Linha {posicao}: valor não numérico.")
+            continue
+
+        identificacao = identificacao or _identificacao_sugerida(posicao)
+        if identificacao in vistos:
+            erros.append(
+                f"Linha {posicao}: identificação “{identificacao}” repete a da "
+                f"linha {vistos[identificacao]}."
+            )
+            continue
+        vistos[identificacao] = posicao
+
+        a_gravar.append(
+            {
+                "amostra": amostra,
+                "identificacao": identificacao,
+                "comparacao": valor_comp,
+                "teste": valor_teste,
+            }
+        )
+
+    if erros:
+        return {"gravadas": 0, "apagadas": 0, "erros": erros}
+
+    gravadas = 0
+    with transaction.atomic():
+        for amostra in a_apagar:
+            amostra.delete()
+
+        for item in a_gravar:
+            amostra = item["amostra"]
+            if amostra is None:
+                AmostraComparacao.objects.create(
+                    estudo=estudo,
+                    identificacao=item["identificacao"],
+                    valor_comparacao=item["comparacao"],
+                    valor_teste=item["teste"],
+                )
+                gravadas += 1
+                continue
+
+            mudou = (
+                amostra.identificacao != item["identificacao"]
+                or amostra.valor_comparacao != item["comparacao"]
+                or amostra.valor_teste != item["teste"]
+            )
+            if mudou:
+                amostra.identificacao = item["identificacao"]
+                amostra.valor_comparacao = item["comparacao"]
+                amostra.valor_teste = item["teste"]
+                amostra.save(
+                    update_fields=["identificacao", "valor_comparacao", "valor_teste"]
+                )
+                gravadas += 1
+
+    return {"gravadas": gravadas, "apagadas": len(a_apagar), "erros": []}

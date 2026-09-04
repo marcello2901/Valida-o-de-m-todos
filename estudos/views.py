@@ -6,6 +6,7 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.views.decorators.http import require_POST
 
 from catalogo.models import Controle
@@ -61,6 +62,7 @@ def quadro(request):
                 "estudo": estudo,
                 "progresso": estudo.progresso(),
                 "proxima_acao": estudo.proxima_acao(),
+                "destino": estudo.tela_da_proxima_acao(),
                 "veredito": veredito,
                 "erro_total": veredito.maior_erro_total() if veredito else None,
             }
@@ -186,6 +188,65 @@ def replicas(request, estudo_id: int):
             "provedores": NivelEstudo.PROVEDORES,
         },
     )
+
+
+@login_required
+def amostras(request, estudo_id: int):
+    """Grade de amostras pareadas: 40 linhas já abertas, ampliáveis.
+
+    Quarenta é o mínimo do CLSI EP09. Abrir a tela já com esse número diz ao
+    laboratório quanto o procedimento pede antes de ele começar, em vez de
+    deixá-lo descobrir no fim do estudo que faltou amostra.
+    """
+    estudo = _estudo_do_usuario(request, estudo_id)
+
+    if estudo.situacao == Estudo.LIBERADO:
+        messages.error(request, "Estudo liberado não aceita alteração de dado bruto.")
+        return redirect("resultado_estudo", estudo_id=estudo.pk)
+
+    if request.method == "POST":
+        total = _inteiro(request.POST.get("total"), servicos.MINIMO_AMOSTRAS_GRADE)
+        if request.POST.get("acao") == "adicionar_linhas":
+            destino = f"{reverse('amostras_estudo', args=[estudo.pk])}?linhas={total + servicos.PASSO_DE_LINHAS}"
+            return redirect(destino)
+
+        resumo = servicos.salvar_grade_amostras(estudo, request.POST, total)
+        if resumo["erros"]:
+            for erro in resumo["erros"][:5]:
+                messages.error(request, erro)
+            messages.error(
+                request, "Nada foi gravado: corrija as linhas acima e envie de novo."
+            )
+        else:
+            messages.success(
+                request,
+                f"{resumo['gravadas']} amostra(s) gravada(s)"
+                + (f", {resumo['apagadas']} apagada(s)." if resumo["apagadas"] else "."),
+            )
+        return redirect("amostras_estudo", estudo_id=estudo.pk)
+
+    grade = servicos.montar_grade_amostras(estudo, _inteiro(request.GET.get("linhas"), 0))
+    return render(
+        request,
+        "estudos/amostras.html",
+        {
+            "secao": "quadro",
+            "estudo": estudo,
+            "grade": grade,
+            "andamento": estudo.progresso(),
+            "passo": servicos.PASSO_DE_LINHAS,
+        },
+    )
+
+
+def _inteiro(bruto, padrao: int) -> int:
+    """Lê um inteiro vindo da requisição, sem confiar no que chegou."""
+    try:
+        valor = int(bruto)
+    except (TypeError, ValueError):
+        return padrao
+    # Teto para uma requisição não pedir cem mil campos e derrubar a tela.
+    return max(0, min(valor, 500))
 
 
 def _salvar_medias_alvo(request, estudo):

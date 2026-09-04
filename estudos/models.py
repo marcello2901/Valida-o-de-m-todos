@@ -233,6 +233,18 @@ class Estudo(models.Model):
             "iniciado": bool(precisao_feita or comparacao_feita),
         }
 
+    def tela_da_proxima_acao(self) -> str:
+        """Qual grade abrir ao clicar no card: réplicas ou amostras pareadas.
+
+        O card do quadro promete uma ação ("Faltam 30 amostras"); mandar o
+        usuário para a tela de réplicas depois disso é uma promessa quebrada.
+        """
+        andamento = self.progresso()
+        falta_precisao = andamento["precisao_total"] and not andamento["precisao_feita"] >= andamento["precisao_total"]
+        if falta_precisao or not andamento["comparacao_total"]:
+            return "replicas_estudo"
+        return "amostras_estudo"
+
     def proxima_acao(self) -> str:
         """A frase que o card do quadro mostra no lugar de um formulário."""
         if self.situacao == self.LIBERADO:
