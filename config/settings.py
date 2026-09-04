@@ -119,9 +119,13 @@ AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
 
-LOGIN_URL = "admin:login"
-LOGIN_REDIRECT_URL = "/admin/"
-LOGOUT_REDIRECT_URL = "/admin/"
+# A entrada do programa é a tela do programa, não a do painel administrativo.
+# O login do painel exige conta de equipe (is_staff): apontar LOGIN_URL para ele
+# deixava qualquer analista de laboratório de fora — ele batia no formulário e
+# recebia "insira um usuário e senha para uma conta de equipe".
+LOGIN_URL = "entrar"
+LOGIN_REDIRECT_URL = "/quadro/"
+LOGOUT_REDIRECT_URL = "entrar"
 
 # Sessão expira em 12 horas — um turno de trabalho.
 SESSION_COOKIE_AGE = 60 * 60 * 12
@@ -138,6 +142,8 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
+# A folha que veste o painel administrativo com a identidade do programa.
+STATICFILES_DIRS = [BASE_DIR / "static"]
 STORAGES = {
     "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
     "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"},

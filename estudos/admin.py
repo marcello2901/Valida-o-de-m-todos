@@ -81,7 +81,10 @@ class AmostraQualitativaInline(SomenteLeituraAposLiberacao, admin.TabularInline)
 
 @admin.register(Estudo)
 class EstudoAdmin(admin.ModelAdmin):
-    list_display = ["identificacao", "mensurando", "tipo", "modulo", "situacao", "data_inicio", "ver_calculos"]
+    list_display = [
+        "identificacao", "mensurando", "tipo_curto", "modulo_curto",
+        "situacao_curta", "data_inicio", "ver_calculos",
+    ]
     list_filter = ["situacao", "tipo", "modulo", "desenho_precisao", "laboratorio"]
     search_fields = ["identificacao", "mensurando__nome"]
     date_hierarchy = "data_inicio"
@@ -126,6 +129,28 @@ class EstudoAdmin(admin.ModelAdmin):
         ("Período", {"fields": ["data_inicio", "data_conclusao"]}),
         ("Registro", {"fields": ["criado_por", "observacoes"]}),
     ]
+
+    # Os rótulos longos explicam a opção no formulário; numa listagem eles
+    # empurram as colunas para fora da tela. Aqui vale o nome curto.
+    _TIPO_CURTO = {Estudo.QUANTITATIVO: "Quantitativo", Estudo.QUALITATIVO: "Qualitativo"}
+    _SITUACAO_CURTA = {
+        Estudo.RASCUNHO: "Rascunho",
+        Estudo.CONCLUIDO: "Concluído",
+        Estudo.LIBERADO: "Liberado",
+        Estudo.CANCELADO: "Cancelado",
+    }
+
+    @admin.display(description="tipo", ordering="tipo")
+    def tipo_curto(self, obj):
+        return self._TIPO_CURTO.get(obj.tipo, obj.tipo)
+
+    @admin.display(description="módulo", ordering="modulo")
+    def modulo_curto(self, obj):
+        return obj.modulo_curto()
+
+    @admin.display(description="situação", ordering="situacao")
+    def situacao_curta(self, obj):
+        return self._SITUACAO_CURTA.get(obj.situacao, obj.situacao)
 
     @admin.display(description="cálculos")
     def ver_calculos(self, obj):

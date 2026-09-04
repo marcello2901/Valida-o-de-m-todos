@@ -1,0 +1,201 @@
+/* Identidade visual do programa aplicada ao painel administrativo.
+ *
+ * O painel é onde metade dos links das telas vai parar. Com a aparência de
+ * fábrica, cada "editar" jogava o usuário num programa visualmente diferente —
+ * cabeçalho azul-escuro, outra tipografia, outro azul de link. O trabalho aqui
+ * é de pele, não de estrutura: o Django expõe a paleta do painel em variáveis
+ * CSS, e este arquivo apenas as aponta para os tokens do sistema.
+ *
+ * Nenhum template do painel é reescrito. É o que mantém a mudança barata e
+ * segura de atualizar: a cada versão do Django o painel continua funcionando,
+ * porque o que mudou foi cor e tipografia, não marcação.
+ */
+
+:root {
+  --superficie: #fcfcfb;
+  --plano: #f9f9f7;
+  --leito: #f4f3f0;
+  --faixa: #f6f5f2;
+  --chip: #efeee9;
+  --tinta: #0b0b0b;
+  --tinta-2: #52514e;
+  --tinta-3: #898781;
+  --grade-linha: #eeede8;
+  --linha: #e1e0d9;
+  --borda: #c3c2b7;
+  --acento: #2a78d6;
+  --acento-escuro: #1f5da8;
+  --acento-fundo: #eef4fc;
+  --aprovado-fundo: #e7f6e7;
+  --reprovado: #d03b3b;
+  --atencao-fundo: #fdf4e0;
+
+  /* Remapeamento da paleta do painel para os tokens acima. */
+  --primary: var(--acento);
+  --secondary: var(--acento);
+  --accent: var(--acento);
+  --primary-fg: #fff;
+
+  --body-fg: var(--tinta);
+  --body-bg: var(--superficie);
+  --body-quiet-color: var(--tinta-3);
+  --body-medium-color: var(--tinta-2);
+  --body-loud-color: var(--tinta);
+
+  --header-color: var(--tinta-3);
+  --header-branding-color: var(--tinta);
+  --header-bg: var(--superficie);
+  --header-link-color: var(--tinta);
+
+  --breadcrumbs-fg: var(--tinta-3);
+  --breadcrumbs-link-fg: var(--tinta-2);
+  --breadcrumbs-bg: var(--faixa);
+
+  --link-fg: var(--acento);
+  --link-hover-color: var(--acento-escuro);
+  --link-selected-fg: var(--acento-escuro);
+
+  --hairline-color: var(--grade-linha);
+  --border-color: var(--linha);
+
+  --error-fg: var(--reprovado);
+  --message-success-bg: var(--aprovado-fundo);
+  --message-warning-bg: var(--atencao-fundo);
+  --message-error-bg: #fdf3f3;
+
+  --darkened-bg: var(--plano);
+  --selected-bg: var(--leito);
+  --selected-row: var(--acento-fundo);
+
+  --button-fg: #fff;
+  --button-bg: var(--acento);
+  --button-hover-bg: var(--acento-escuro);
+  --default-button-bg: var(--acento);
+  --default-button-hover-bg: var(--acento-escuro);
+  --close-button-bg: var(--tinta-3);
+  --close-button-hover-bg: var(--tinta-2);
+  --delete-button-bg: var(--reprovado);
+  --delete-button-hover-bg: #a82f2f;
+
+  --object-tools-fg: #fff;
+  --object-tools-bg: var(--tinta);
+  --object-tools-hover-bg: var(--tinta-2);
+
+  --font-family-primary: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+body { background: var(--plano); }
+
+/* Cabeçalho: claro, com a marca do programa e o caminho de volta. */
+#header {
+  border-bottom: 1px solid var(--linha);
+  padding: 10px 24px;
+  align-items: center;
+}
+#branding h1, #branding h1 a:link, #branding h1 a:visited {
+  font-family: "Instrument Sans", system-ui, sans-serif;
+  font-size: 17px; font-weight: 600; letter-spacing: -0.011em; color: var(--tinta);
+}
+#user-tools { font-size: 12.5px; color: var(--tinta-3); text-transform: none; }
+#user-tools a { border-bottom: none; color: var(--acento); }
+
+.marca-programa {
+  width: 30px; height: 30px; border-radius: 8px; background: var(--tinta);
+  color: var(--superficie); display: inline-flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: 14px; margin-right: 10px; vertical-align: middle;
+  font-family: "Instrument Sans", system-ui, sans-serif;
+}
+.voltar-programa {
+  display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px;
+  border-radius: 8px; border: 1px solid var(--linha); background: var(--superficie);
+  color: var(--tinta-2); font-size: 12.5px; font-weight: 600; margin-left: 14px;
+}
+.voltar-programa:hover { border-color: var(--borda); color: var(--tinta); }
+
+div.breadcrumbs {
+  border-bottom: 1px solid var(--linha); padding: 9px 24px; font-size: 12.5px;
+}
+
+/* Cartões: o painel usa .module como caixa; recebe a mesma borda e raio. */
+.module {
+  border: 1px solid var(--linha); border-radius: 11px; overflow: hidden;
+  box-shadow: 0 1px 2px rgba(11, 11, 11, .035); background: var(--superficie);
+}
+.module caption, .module h2, .inline-group h2 {
+  background: var(--faixa); color: var(--tinta-2);
+  font-size: 12px; font-weight: 600; letter-spacing: .02em; text-transform: none;
+  padding: 9px 14px; border-bottom: 1px solid var(--grade-linha);
+}
+.dashboard .module table th, .dashboard .module table td { border-bottom: 1px solid var(--grade-linha); }
+
+#content { padding: 20px 24px; }
+#content-main { max-width: none; }
+
+/* Formulários e botões, com o mesmo raio e o mesmo foco das telas do programa. */
+.form-row { border-bottom: 1px solid var(--grade-linha); padding: 11px 14px; }
+input[type="text"], input[type="password"], input[type="email"], input[type="url"],
+input[type="number"], input[type="tel"], input[type="date"], textarea, select, .vTextField {
+  border: 1px solid var(--linha); border-radius: 8px; padding: 6px 9px;
+  background: var(--superficie); color: var(--tinta);
+}
+input:focus, textarea:focus, select:focus, .vTextField:focus {
+  outline: 2px solid var(--acento); outline-offset: -1px; border-color: var(--acento);
+}
+.button, input[type="submit"], input[type="button"], .submit-row input, a.button {
+  border-radius: 8px; font-weight: 600; font-size: 13px; padding: 7px 14px;
+  border: 1px solid transparent;
+}
+.submit-row { border-radius: 11px; border: 1px solid var(--linha); background: var(--faixa); padding: 12px 14px; }
+.object-tools a { border-radius: 8px; font-weight: 600; letter-spacing: 0; text-transform: none; }
+
+/* Listagens */
+#changelist table thead th {
+  background: var(--faixa); color: var(--tinta-2); font-size: 12px; font-weight: 600;
+  border-bottom: 1px solid var(--linha);
+}
+#changelist-filter { background: var(--leito); border-radius: 11px; }
+#changelist-filter h2 { background: transparent; border-bottom: 1px solid var(--linha); }
+.paginator { border-top: 1px solid var(--grade-linha); background: transparent; }
+
+.messagelist li { border-radius: 8px; border: 1px solid var(--linha); }
+
+/* Ícones do painel: verde, amarelo e azul de fábrica, um por ação. Um filtro
+ * neutraliza todos de uma vez — e continua valendo se o Django trocar os
+ * desenhos numa versão futura, o que não aconteceria se eu substituísse cada
+ * arquivo SVG por um meu. */
+.addlink, .changelink, .viewlink, .deletelink,
+.related-widget-wrapper-link, .datetimeshortcuts a img,
+.selector-add, .selector-remove, .selector-chooseall, .selector-clearall {
+  filter: grayscale(1) brightness(.62);
+}
+a:hover > .addlink, a:hover > .changelink, a:hover > .viewlink,
+.related-widget-wrapper-link:hover { filter: grayscale(1) brightness(.35); }
+
+/* O painel traz um alternador claro/escuro próprio. O programa tem um tema só,
+ * e no escuro os tokens desta folha brigariam com os do painel, produzindo uma
+ * tela meio clara e meio escura. Some com o botão e fixa o tema claro. */
+.theme-toggle { display: none !important; }
+html { color-scheme: light !important; }
+
+/* Ferramentas de objeto (Histórico, Ver no site): mesma caixa dos botões do
+ * programa, sem caixa-alta. */
+.object-tools a, .object-tools a:link, .object-tools a:visited {
+  text-transform: none; letter-spacing: 0; font-size: 12.5px;
+  padding: 7px 13px; border-radius: 8px;
+}
+
+/* Títulos de bloco do formulário: a mesma faixa das telas do programa. */
+fieldset.module > h2, .inline-related h3 {
+  background: var(--faixa); color: var(--tinta-2);
+  font-size: 12px; font-weight: 600; text-transform: none; letter-spacing: .02em;
+  padding: 9px 14px; border-bottom: 1px solid var(--grade-linha);
+}
+fieldset.module .description { padding: 10px 14px 0; color: var(--tinta-3); font-size: 12.5px; }
+
+/* Barra lateral de navegação do painel. */
+#nav-sidebar .current-model a { background: var(--acento-fundo); color: var(--acento); }
+#nav-filter { border-radius: 8px; border: 1px solid var(--linha); }
+
+/* O "+" das ferramentas de objeto é imagem de fundo alinhada à direita: sem
+ * folga o texto passa por baixo dele. */
+.object-tools a.addlink { padding-right: 30px; background-position: right 11px center; }

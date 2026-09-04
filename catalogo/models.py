@@ -324,6 +324,17 @@ class EspecificacaoQualidade(models.Model):
     def __str__(self):
         return f"{self.nome} — {self.mensurando.nome}"
 
+    _FONTE_CURTA = {
+        PROFICIENCIA: "Ensaio de proficiência",
+        VARIACAO_BIOLOGICA: "Variação biológica",
+        ESTADO_DA_ARTE: "Estado da arte",
+        MANUAL: "Definido pelo laboratório",
+    }
+
+    def fonte_curta(self) -> str:
+        """Nome da fonte para chip de cartão, sem cortar palavra no meio."""
+        return self._FONTE_CURTA.get(self.fonte, self.fonte)
+
     def referencia_base(self) -> str:
         """Frase que justifica o erro total, montada a partir da fonte escolhida."""
         modelo = self._MODELOS_DE_REFERENCIA.get(self.fonte)

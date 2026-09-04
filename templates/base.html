@@ -64,6 +64,20 @@
   }
   .trilho a:hover { background: var(--leito); color: var(--tinta-2); }
   .trilho a.ativo { background: var(--acento-fundo); color: var(--acento); }
+  .sair {
+    width: 44px; height: 44px; border-radius: 10px; border: none; background: none;
+    color: var(--tinta-3); cursor: pointer; display: flex; align-items: center;
+    justify-content: center; padding: 0;
+  }
+  .sair:hover { background: var(--leito); color: var(--tinta-2); }
+  .sair:hover .inicial { display: none; }
+  .sair:hover svg { display: block; }
+  .sair svg { display: none; }
+  .inicial {
+    width: 28px; height: 28px; border-radius: 50%; background: var(--chip); color: var(--tinta-2);
+    display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700;
+    font-family: "Instrument Sans", system-ui, sans-serif;
+  }
 
   .conteudo { flex-grow: 1; min-width: 0; display: flex; flex-direction: column; }
 
@@ -74,6 +88,7 @@
   .barra h1 { font-size: 19px; font-weight: 600; margin: 0; line-height: 1.25; }
   .barra .sub { font-size: 12.5px; color: var(--tinta-3); margin: 2px 0 0; }
   .cresce { flex-grow: 1; }
+  .trilho .cresce { width: 100%; }
 
   .botao {
     display: inline-flex; align-items: center; gap: 7px; height: 34px; padding: 0 14px;
@@ -102,6 +117,87 @@
   .estado--APROVADO { color: var(--aprovado); }
   .estado--REPROVADO { color: var(--reprovado); }
   .estado--INDETERMINADO { color: var(--atencao-tinta); }
+
+  /* --- Primitivas compartilhadas -----------------------------------------
+     Estavam repetidas em cada tela, com valores levemente diferentes: o mesmo
+     ".grade" tinha três larguras e ".coluna" queria dizer duas coisas. Uma
+     identidade visual só existe se houver um lugar onde ela é definida. Tudo
+     daqui para baixo é usado por mais de uma tela; o que é de uma tela só
+     continua no bloco de estilo dela. */
+
+  .area { flex-grow: 1; padding: 18px 24px 28px; }
+
+  /* Cabeçalho de seção — o mesmo do cabeçalho de coluna do quadro: ponto
+     colorido, nome, contagem. É o que amarra as telas visualmente. */
+  .secao { margin-bottom: 26px; }
+  .grupo-titulo { display: flex; align-items: center; gap: 8px; margin-bottom: 11px; }
+  .grupo-titulo h2 { font-size: 13px; font-weight: 600; color: var(--tinta-2); margin: 0; }
+  .ponto { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; background: var(--borda); }
+  .conta {
+    font-size: 11px; color: var(--tinta-3); background: var(--trilho);
+    border-radius: 20px; padding: 1px 8px; font-variant-numeric: tabular-nums;
+  }
+  .explica { font-size: 12px; color: var(--tinta-3); margin: 0; }
+
+  /* Leito: o fundo recuado das colunas do quadro, reaproveitado por qualquer
+     agrupamento de cards. */
+  .leito { background: var(--leito); border-radius: 12px; padding: 11px 10px; }
+
+  .grade {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(272px, 1fr));
+    gap: 13px; align-items: start;
+  }
+
+  /* Ficha: o card do quadro, sem o que é específico de validação. */
+  .ficha {
+    display: block; padding: 14px 15px; color: var(--tinta);
+    transition: border-color .13s ease, box-shadow .13s ease;
+  }
+  a.ficha:hover { border-color: var(--borda); color: var(--tinta); box-shadow: 0 2px 8px rgba(11,11,11,.07); }
+
+  .topo { display: flex; align-items: center; gap: 11px; }
+  .sigla {
+    display: flex; align-items: center; justify-content: center; width: 38px; height: 38px;
+    border-radius: 10px; background: var(--leito); font-size: 13px; font-weight: 700;
+    flex-shrink: 0; font-family: "Instrument Sans", system-ui, sans-serif;
+  }
+  .titulo { font-size: 15px; font-weight: 600; font-family: "Instrument Sans", system-ui, sans-serif; }
+  .abaixo { font-size: 11.5px; color: var(--tinta-3); }
+
+  .pares { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 13px 0 0; }
+  .pares dt { font-size: 9.5px; color: var(--tinta-3); text-transform: uppercase; letter-spacing: .05em; }
+  .pares dd {
+    margin: 1px 0 0; font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums;
+    font-family: "Instrument Sans", system-ui, sans-serif;
+  }
+
+  .lista { margin: 12px 0 0; padding: 10px 0 0; border-top: 1px solid var(--grade); }
+  .item { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 12px; }
+  .item .rotulo { color: var(--tinta-3); width: 62px; flex-shrink: 0; font-size: 11px; }
+  .item .nome { flex-grow: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .pe {
+    margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--grade);
+    display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--tinta-3);
+  }
+  .filtros { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+
+  /* Campos de formulário: mesma borda, mesmo raio e mesmo foco dos botões. */
+  input[type="text"], input[type="password"], input[type="email"],
+  input[type="number"], input[type="date"], select, textarea {
+    font: inherit; font-size: 13px; color: var(--tinta); background: var(--superficie);
+    border: 1px solid var(--linha); border-radius: var(--raio-menor); padding: 6px 9px;
+    width: 100%; font-variant-numeric: tabular-nums;
+  }
+  input:focus, select:focus, textarea:focus {
+    outline: 2px solid var(--acento); outline-offset: -1px; border-color: var(--acento);
+  }
+  input:disabled, select:disabled { background: var(--chip); color: var(--tinta-3); }
+  .campo { margin-top: 10px; }
+  .campo > label, .rotulo-campo {
+    display: block; font-size: 10px; color: var(--tinta-3); font-weight: 600;
+    text-transform: uppercase; letter-spacing: .05em; margin-bottom: 3px;
+  }
 
   .trilha { height: 4px; border-radius: 3px; background: var(--trilho); overflow: hidden; }
   .trilha > span { display: block; height: 100%; background: var(--acento); }
@@ -141,6 +237,7 @@
 <body>
 <div class="aplicacao">
 
+  {% block navegacao %}
   <nav class="trilho">
     <div class="marca display">V</div>
 
@@ -153,7 +250,24 @@
     <a href="{% url 'configuracoes' %}" class="{% if secao == 'configuracoes' %}ativo{% endif %}" title="Configurações">
       <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 9h5M7 13h3"/><circle cx="17" cy="12" r="2"/></svg>
     </a>
+
+    {% comment %}
+      Quem entrou precisa poder sair. A inicial fica no pé do trilho, no lugar
+      onde todo programa a coloca, e o título diz de quem é a sessão — sem isso
+      um computador compartilhado de bancada não tem como saber quem está logado.
+    {% endcomment %}
+    {% if user.is_authenticated %}
+    <div class="cresce"></div>
+    <form method="post" action="{% url 'sair' %}" style="width: 44px">
+      {% csrf_token %}
+      <button type="submit" class="sair" title="Sair — {{ user.get_full_name|default:user.username }}">
+        <span class="inicial">{{ user.username|slice:":1"|upper }}</span>
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15 17v1.5A2.5 2.5 0 0 1 12.5 21h-6A2.5 2.5 0 0 1 4 18.5v-13A2.5 2.5 0 0 1 6.5 3h6A2.5 2.5 0 0 1 15 5.5V7"/><path d="M11 12h9M17 8.5l3.5 3.5-3.5 3.5"/></svg>
+      </button>
+    </form>
+    {% endif %}
   </nav>
+  {% endblock %}
 
   <div class="conteudo">
     {% if messages %}

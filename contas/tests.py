@@ -177,3 +177,107 @@ class TestConfiguracoes(TestCase):
         self.client.logout()
 
         self.assertEqual(self.client.get(self.url).status_code, 302)
+
+
+class TestEntrada(TestCase):
+    """A porta de entrada do programa.
+
+    Existe por um defeito que travava o produto inteiro: LOGIN_URL apontava para
+    o login do painel administrativo, que exige conta de equipe. Um analista de
+    laboratório batia no formulário e recebia "insira um usuário e senha para
+    uma conta de equipe" — ou seja, ninguém que não fosse da equipe interna
+    conseguia usar o sistema.
+    """
+
+    def setUp(self):
+        self.laboratorio = Laboratorio.objects.create(
+            razao_social="Lab A", cnpj="11.111.111/0001-11"
+        )
+        self.senha = "senha-longa-de-teste"
+        self.usuario = Usuario.objects.create_user(
+            username="analista", password=self.senha,
+            laboratorio=self.laboratorio, funcao=Usuario.ANALISTA,
+        )
+
+    def test_analista_sem_conta_de_equipe_entra_no_programa(self):
+        self.assertFalse(self.usuario.is_staff)
+
+        resposta = self.client.post(
+            reverse("entrar"), {"username": "analista", "password": self.senha}
+        )
+
+        self.assertRedirects(resposta, "/quadro/")
+
+    def test_senha_errada_volta_com_recado(self):
+        resposta = self.client.post(
+            reverse("entrar"), {"username": "analista", "password": "errada"}
+        )
+
+        self.assertEqual(resposta.status_code, 200)
+        self.assertContains(resposta, "Usuário ou senha incorretos")
+
+    def test_quem_nao_entrou_e_mandado_para_a_tela_de_entrada(self):
+        resposta = self.client.get(reverse("quadro"))
+
+        self.assertIn(reverse("entrar"), resposta["Location"])
+
+    def test_depois_de_entrar_o_quadro_abre(self):
+        self.client.login(username="analista", password=self.senha)
+
+        self.assertEqual(self.client.get(reverse("quadro")).status_code, 200)
+
+    def test_da_para_sair(self):
+        self.client.login(username="analista", password=self.senha)
+
+        resposta = self.client.post(reverse("sair"))
+
+        self.assertRedirects(resposta, reverse("entrar"))
+        self.assertEqual(self.client.get(reverse("quadro")).status_code, 302)
+
+    def test_o_trilho_oferece_a_saida(self):
+        self.client.login(username="analista", password=self.senha)
+
+        resposta = self.client.get(reverse("quadro"))
+
+        self.assertContains(resposta, reverse("sair"))
+
+
+class TestRotulosCurtos(TestCase):
+    """Nenhum rótulo de cartão pode terminar em reticências.
+
+    Quatro telas seguidas nasceram com ``truncatewords`` cortando um rótulo no
+    meio — "Precisão ...", "Sistema ...", "Analista ...". Cortar não é encurtar:
+    "Sistema ..." não distingue o sistema em teste do de comparação, que é a
+    única informação que o rótulo carrega. Estes testes fixam nomes curtos de
+    verdade, escritos, no lugar do corte automático.
+    """
+
+    def test_funcao_do_usuario_tem_nome_curto(self):
+        usuario = Usuario(funcao=Usuario.RESPONSAVEL)
+
+        self.assertEqual(usuario.funcao_curta(), "Responsável técnico")
+        self.assertNotIn("…", usuario.funcao_curta())
+
+    def test_papel_do_sistema_distingue_teste_de_comparacao(self):
+        teste = SistemaAnalitico(papel=SistemaAnalitico.TESTE)
+        comparacao = SistemaAnalitico(papel=SistemaAnalitico.COMPARACAO)
+
+        self.assertNotEqual(teste.papel_curto(), comparacao.papel_curto())
+
+    def test_modulo_da_assinatura_tem_nome_curto(self):
+        assinatura = Assinatura(modulo=Assinatura.COMPLETO)
+
+        self.assertEqual(assinatura.modulo_curto(), "Precisão + Comparabilidade")
+
+    def test_nenhum_template_corta_rotulo_com_truncatewords(self):
+        # Guarda o hábito, não só as ocorrências de hoje.
+        import pathlib
+
+        raiz = pathlib.Path(__file__).resolve().parent.parent
+        cortados = [
+            str(caminho.relative_to(raiz))
+            for caminho in raiz.rglob("*.html")
+            if "truncatewords" in caminho.read_text(encoding="utf-8")
+        ]
+
+        self.assertEqual(cortados, [], "use um rótulo curto de verdade, não truncatewords")

@@ -6,6 +6,7 @@ respondendo pelos cadastros e pela digitação de dados brutos.
 """
 
 from django.contrib import admin
+from django.contrib.auth import views as auth_views
 from django.urls import path
 from django.views.generic import RedirectView
 
@@ -15,6 +16,14 @@ from estudos import views as estudos_views
 
 urlpatterns = [
     path("", RedirectView.as_view(pattern_name="quadro", permanent=False)),
+    path(
+        "entrar/",
+        auth_views.LoginView.as_view(
+            template_name="contas/entrar.html", redirect_authenticated_user=True
+        ),
+        name="entrar",
+    ),
+    path("sair/", auth_views.LogoutView.as_view(), name="sair"),
     path("quadro/", estudos_views.quadro, name="quadro"),
     path("analitos/", catalogo_views.biblioteca, name="biblioteca"),
     path("configuracoes/", contas_views.configuracoes, name="configuracoes"),

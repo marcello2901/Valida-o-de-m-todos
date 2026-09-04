@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+
+{% comment %}
+  Tela de entrada do programa.
+
+  Antes o login era o do painel administrativo, que só aceita conta de equipe:
+  um analista de laboratório simplesmente não conseguia entrar. Além do defeito,
+  era a primeira tela que o cliente via — e era de outro programa.
+
+  Não usa o trilho de navegação: não há para onde navegar antes de entrar.
+{% endcomment %}
+
+{% block titulo %}Entrar{% endblock %}
+
+{% block navegacao %}{% endblock %}
+
+{% block estilo %}
+<style>
+  .aplicacao { display: block; }
+  .palco { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
+  .entrada { width: 100%; max-width: 348px; padding: 26px 26px 24px; }
+  .marca-grande {
+    width: 44px; height: 44px; border-radius: 12px; background: var(--tinta);
+    color: var(--superficie); display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 19px; font-family: "Instrument Sans", system-ui, sans-serif;
+  }
+  .entrada h1 { font-size: 19px; font-weight: 600; margin: 16px 0 3px; }
+  .entrada .sub { font-size: 13px; color: var(--tinta-3); margin: 0 0 20px; }
+  .entrada .campo:first-of-type { margin-top: 0; }
+  .erro {
+    display: flex; align-items: start; gap: 9px; font-size: 13px; line-height: 1.45;
+    padding: 11px 13px; border-radius: 8px; margin-bottom: 16px;
+    border: 1px solid #f0cccc; background: #fdf3f3; color: #7a1f1f;
+  }
+  .rodape-entrada {
+    margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--grade);
+    font-size: 12px; color: var(--tinta-3);
+  }
+</style>
+{% endblock %}
+
+{% block corpo %}
+<div class="palco">
+  <div class="cartao entrada">
+    <div class="marca-grande">V</div>
+    <h1 class="display">Validação de métodos</h1>
+    <p class="sub">Entre com o usuário do seu laboratório.</p>
+
+    {% if form.errors %}
+    <div class="erro">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="flex-shrink: 0; margin-top: 1px"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.5v.01"/></svg>
+      <span>Usuário ou senha incorretos. Confira e tente de novo.</span>
+    </div>
+    {% endif %}
+
+    <form method="post">
+      {% csrf_token %}
+      <div class="campo">
+        <label for="id_username">Usuário</label>
+        <input type="text" name="username" id="id_username" autocomplete="username"
+               autofocus required value="{{ form.username.value|default:'' }}">
+      </div>
+      <div class="campo">
+        <label for="id_password">Senha</label>
+        <input type="password" name="password" id="id_password" autocomplete="current-password" required>
+      </div>
+      <input type="hidden" name="next" value="{{ next }}">
+      <button type="submit" class="botao botao--primario"
+              style="width: 100%; justify-content: center; margin-top: 18px; height: 38px">
+        Entrar
+      </button>
+    </form>
+
+    <p class="rodape-entrada">
+      Esqueceu a senha? Peça ao gestor do laboratório para redefinir.
+    </p>
+  </div>
+</div>
+{% endblock %}
