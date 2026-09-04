@@ -149,4 +149,7 @@ STORAGES = {
     "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"},
 }
 
+# Troca o armazenamento de estáticos durante os testes. O porquê está no módulo.
+TEST_RUNNER = "config.testes.Executor"
+
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"

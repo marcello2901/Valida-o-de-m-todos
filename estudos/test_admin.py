@@ -13,7 +13,7 @@ como 500 aqui, e não no navegador do laboratório.
 """
 
 from django.contrib import admin
-from django.test import TestCase, override_settings
+from django.test import TestCase
 from django.urls import reverse
 
 from contas.models import Usuario
@@ -22,15 +22,6 @@ from estudos.models import Estudo
 from .tests import montar_estudo, montar_laboratorio
 
 
-# Os testes rodam com DEBUG desligado, e aí o armazenamento de estáticos do
-# whitenoise exige o manifesto gerado por ``collectstatic``. Servir os arquivos
-# direto é o suficiente aqui: o que se testa é a view, não o cache de estáticos.
-@override_settings(
-    STORAGES={
-        "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
-        "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
-    }
-)
 class TestPainelAdministrativo(TestCase):
     @classmethod
     def setUpTestData(cls):

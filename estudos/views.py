@@ -260,7 +260,7 @@ def _salvar_medias_alvo(request, estudo):
         bruto = (request.POST.get(f"alvo_{nivel.pk}") or "").strip()
         provedor = (request.POST.get(f"provedor_{nivel.pk}") or "").strip()
         try:
-            alvo = Decimal(bruto.replace(",", ".")) if bruto else None
+            alvo = servicos.converter_numero(bruto) if bruto else None
         except (InvalidOperation, ValueError):
             messages.error(
                 request,

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load static %}
 
 {% block titulo %}Lançar amostras — {{ estudo.mensurando.nome }}{% endblock %}
 
@@ -15,7 +16,7 @@
     font-size: 10px; font-weight: 700; color: var(--tinta-3);
     text-transform: uppercase; letter-spacing: .06em;
   }
-  .cabeca .col-id { width: 96px; flex-shrink: 0; }
+  .cabeca .col-id { width: 140px; flex-shrink: 0; }
   .cabeca .col-valor { flex: 1; text-align: right; }
 
   .linhas { padding: 6px 12px 12px; }
@@ -24,7 +25,7 @@
     width: 20px; flex-shrink: 0; font-size: 10.5px; color: var(--tinta-3);
     text-align: right; font-variant-numeric: tabular-nums;
   }
-  .linha .id { width: 90px; flex-shrink: 0; }
+  .linha .id { width: 134px; flex-shrink: 0; }
   .linha .valor { flex: 1; text-align: right; }
   .seta-par { color: var(--tinta-3); flex-shrink: 0; }
   .travada { font-size: 10.5px; color: var(--atencao-tinta); flex-shrink: 0; }
@@ -36,6 +37,8 @@
   }
 </style>
 {% endblock %}
+
+{% block scripts %}<script src="{% static 'js/colar.js' %}"></script>{% endblock %}
 
 {% block corpo %}
 <div class="barra">
@@ -75,11 +78,18 @@
     no rodapé acrescenta {{ passo }} de cada vez.
   </p>
 
+  <p class="nota" style="margin: 0 0 12px">
+    Dá para colar direto da planilha: clique na célula de onde quer começar e
+    tecle <strong>Ctrl+V</strong>. Três colunas preenchem identificação,
+    comparação e teste; duas preenchem a partir de onde você clicou.
+  </p>
+  <p class="aviso-colagem" data-aviso-colagem hidden></p>
+
   <form method="post">
     {% csrf_token %}
     <input type="hidden" name="total" value="{{ grade.total }}">
 
-    <div class="pistas">
+    <div class="pistas" data-grade="amostras">
       {% for pista in grade.pistas %}
       <section class="cartao pista">
         <div class="cabeca">
@@ -102,15 +112,18 @@
             {% else %}
               <input type="text" class="id" name="amostra_{{ linha.posicao }}_id"
                      value="{{ linha.identificacao }}" placeholder="{{ linha.sugestao }}"
+                     data-linha="{{ linha.posicao }}" data-coluna="0"
                      aria-label="Identificação da amostra {{ linha.posicao }}">
               <input type="text" class="valor" inputmode="decimal"
                      name="amostra_{{ linha.posicao }}_comparacao"
                      value="{{ linha.comparacao|default_if_none:'' }}"
+                     data-linha="{{ linha.posicao }}" data-coluna="1"
                      aria-label="Resultado da amostra {{ linha.posicao }} no sistema de comparação">
               <span class="seta-par" aria-hidden="true">&rarr;</span>
               <input type="text" class="valor" inputmode="decimal"
                      name="amostra_{{ linha.posicao }}_teste"
                      value="{{ linha.teste|default_if_none:'' }}"
+                     data-linha="{{ linha.posicao }}" data-coluna="2"
                      aria-label="Resultado da amostra {{ linha.posicao }} no sistema em teste">
             {% endif %}
           </div>

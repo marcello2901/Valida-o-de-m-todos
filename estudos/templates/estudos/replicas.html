@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load static %}
 
 {% block titulo %}Lançar réplicas — {{ estudo.mensurando.nome }}{% endblock %}
 
@@ -38,6 +39,8 @@
 </style>
 {% endblock %}
 
+{% block scripts %}<script src="{% static 'js/colar.js' %}"></script>{% endblock %}
+
 {% block corpo %}
 <div class="barra">
   <a href="{% url 'resultado_estudo' estudo.pk %}" class="botao" style="width: 34px; padding: 0; justify-content: center" title="Voltar ao resultado">
@@ -55,9 +58,16 @@
 </div>
 
 <div class="area">
+  <p class="nota" style="margin: 0 0 12px">
+    Dá para colar direto da planilha: clique na réplica de onde quer começar e
+    tecle <strong>Ctrl+V</strong>. Uma coluna de rótulos (“Replicata 1”) é
+    descartada, e colar três colunas preenche os três níveis de uma vez.
+  </p>
+  <p class="aviso-colagem" data-aviso-colagem hidden></p>
+
   <form method="post">
     {% csrf_token %}
-    <div class="pistas">
+    <div class="pistas" data-grade="replicas">
 
       {% for coluna in colunas %}
       <section class="cartao pista">
@@ -99,6 +109,7 @@
               {% else %}
                 <input type="text" inputmode="decimal" name="{{ linha.campo }}"
                        value="{{ linha.valor|default_if_none:'' }}"
+                       data-linha="{{ linha.posicao }}" data-coluna="{{ forloop.parentloop.counter0 }}"
                        aria-label="Réplica {{ linha.posicao }} do nível {{ coluna.nivel.numero }}">
               {% endif %}
             </div>

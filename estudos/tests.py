@@ -824,3 +824,79 @@ class TestGradeDeAmostras(TestCase):
         resposta = self.client.get(self.url)
 
         self.assertContains(resposta, "Faltam 30 para o mínimo do EP09")
+
+
+class TestLeituraDeNumeroBrasileiro(TestCase):
+    """Como o programa lê um número copiado de planilha em português.
+
+    O Excel em pt-BR copia 1234,56 como “1.234,56”. Trocar só a vírgula por
+    ponto produzia “1.234.56”, recusado como não-numérico — ou seja, glicose,
+    CK e ferritina, que passam de mil na rotina, não entravam.
+    """
+
+    def test_virgula_decimal(self):
+        self.assertEqual(servicos.converter_numero("0,930"), Decimal("0.930"))
+
+    def test_ponto_de_milhar_com_virgula_decimal(self):
+        self.assertEqual(servicos.converter_numero("1.234,56"), Decimal("1234.56"))
+        self.assertEqual(servicos.converter_numero("1.234.567,89"), Decimal("1234567.89"))
+
+    def test_formato_americano_tambem_e_lido(self):
+        self.assertEqual(servicos.converter_numero("1,234.56"), Decimal("1234.56"))
+
+    def test_zero_a_esquerda_nao_e_milhar(self):
+        # "0.930" só pode ser 0,930: nenhum separador de milhar segue um zero.
+        self.assertEqual(servicos.converter_numero("0.930"), Decimal("0.930"))
+
+    def test_quatro_digitos_antes_do_ponto_nao_sao_milhar(self):
+        # O milhar sairia como "1.234.567"; então "1234.567" é decimal.
+        self.assertEqual(servicos.converter_numero("1234.567"), Decimal("1234.567"))
+
+    def test_o_caso_ambiguo_e_recusado_em_vez_de_adivinhado(self):
+        # "1.500" tanto pode ser 1,5 quanto 1500. Adivinhar errado aqui não dá
+        # um número estranho: dá um número mil vezes maior num laudo assinado.
+        with self.assertRaises(servicos.NumeroAmbiguo):
+            servicos.converter_numero("1.500")
+
+    def test_a_recusa_explica_as_duas_leituras(self):
+        try:
+            servicos.converter_numero("12.345")
+        except servicos.NumeroAmbiguo as ambiguo:
+            self.assertIn("12,345", str(ambiguo))
+            self.assertIn("12345", str(ambiguo))
+        else:
+            self.fail("deveria ter recusado")
+
+    def test_a_grade_recusa_o_ambiguo_com_a_linha(self):
+        laboratorio = montar_laboratorio("Lab A", "11.111.111/0001-11")
+        usuario = Usuario.objects.create_user(
+            username="analista", password="senha-longa-de-teste", laboratorio=laboratorio
+        )
+        estudo = montar_estudo(laboratorio, usuario)
+        self.client.force_login(usuario)
+
+        resposta = self.client.post(
+            reverse("amostras_estudo", args=[estudo.pk]),
+            {"total": "40", "amostra_11_comparacao": "1.500", "amostra_11_teste": "1,6"},
+            follow=True,
+        )
+
+        self.assertContains(resposta, "Linha 11")
+        self.assertContains(resposta, "pode ser")
+
+    def test_valores_acima_de_mil_entram_pela_grade(self):
+        # Glicose de 1.234 mg/dL vinda da planilha: antes era recusada.
+        laboratorio = montar_laboratorio("Lab A", "11.111.111/0001-11")
+        usuario = Usuario.objects.create_user(
+            username="analista", password="senha-longa-de-teste", laboratorio=laboratorio
+        )
+        estudo = montar_estudo(laboratorio, usuario)
+        self.client.force_login(usuario)
+
+        self.client.post(
+            reverse("amostras_estudo", args=[estudo.pk]),
+            {"total": "40", "amostra_11_comparacao": "1.234,50", "amostra_11_teste": "1.240,00"},
+        )
+
+        gravada = AmostraComparacao.objects.get(estudo=estudo, identificacao="AM-011")
+        self.assertEqual(gravada.valor_comparacao, Decimal("1234.5000"))

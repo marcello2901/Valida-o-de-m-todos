@@ -667,7 +667,10 @@ def salvar_grade(estudo, dados) -> dict:
                     continue
 
                 try:
-                    valor = Decimal(bruto.replace(",", "."))
+                    valor = converter_numero(bruto)
+                except NumeroAmbiguo as ambiguo:
+                    erros.append(f"Nível {nivel.numero}, réplica {posicao}: {ambiguo}")
+                    continue
                 except (InvalidOperation, ValueError):
                     erros.append(
                         f"Nível {nivel.numero}, réplica {posicao}: "
@@ -717,7 +720,7 @@ def acrescentar_nivel(estudo, controle_id: str, media_alvo: str = "") -> str:
     alvo = None
     if media_alvo.strip():
         try:
-            alvo = Decimal(media_alvo.strip().replace(",", "."))
+            alvo = converter_numero(media_alvo)
         except (InvalidOperation, ValueError):
             return f"“{media_alvo}” não é um número válido para a média interlaboratorial."
 
@@ -780,9 +783,59 @@ def montar_grade_amostras(estudo, linhas_pedidas: int = 0) -> dict:
     return {"total": total, "pistas": pistas, "minimo": comp.MINIMO_AMOSTRAS_EP09}
 
 
-def _numero(bruto: str):
-    """Converte texto digitado em Decimal, aceitando vírgula decimal."""
-    return Decimal(bruto.replace(",", "."))
+class NumeroAmbiguo(ValueError):
+    """O texto pode ser lido de dois jeitos, com mil vezes de diferença."""
+
+
+def converter_numero(bruto: str) -> Decimal:
+    """Lê um número como um laboratório brasileiro o escreve.
+
+    O Excel em português copia mil e duzentos e trinta e quatro vírgula cinco
+    seis como ``1.234,56``. Trocar só a vírgula por ponto produzia ``1.234.56``,
+    que o Decimal recusa — ou seja, glicose, CK e ferritina, que passam de mil
+    na rotina, simplesmente não entravam.
+
+    Quando há os dois separadores, o último é o decimal e o outro é o de milhar.
+    Vírgula sozinha é sempre decimal. Ponto sozinho com exatamente três casas
+    depois é **ambíguo** — ``1.500`` tanto pode ser 1,5 quanto 1500 — e aí a
+    função recusa em vez de escolher. Escolher errado aqui não dá um número
+    estranho: dá um número mil vezes maior num relatório assinado.
+    """
+    texto = bruto.strip().replace(" ", "").replace("\u00a0", "")
+    tem_ponto = "." in texto
+    tem_virgula = "," in texto
+
+    if tem_ponto and tem_virgula:
+        if texto.rfind(",") > texto.rfind("."):
+            texto = texto.replace(".", "").replace(",", ".")
+        else:
+            texto = texto.replace(",", "")
+    elif tem_virgula:
+        texto = texto.replace(",", ".")
+    elif tem_ponto:
+        # Só é ambíguo o que caberia como grupo de milhar: 1 a 3 dígitos antes
+        # do ponto, sem zero à esquerda. "0.930" não tem leitura dupla — nenhum
+        # separador de milhar vem depois de um zero — e "1234.567" também não,
+        # porque o milhar sairia como "1.234.567".
+        inteiro, _, fracao = texto.rpartition(".")
+        cabeca = inteiro.lstrip("+-")
+        parece_milhar = (
+            len(fracao) == 3
+            and cabeca.isdigit()
+            and 1 <= len(cabeca) <= 3
+            and not cabeca.startswith("0")
+        )
+        if parece_milhar:
+            raise NumeroAmbiguo(
+                f"“{bruto.strip()}” pode ser {inteiro},{fracao} ou {inteiro}{fracao}. "
+                "Use vírgula para o decimal, ou tire o separador de milhar."
+            )
+
+    return Decimal(texto)
+
+
+def _numero(bruto: str) -> Decimal:
+    return converter_numero(bruto)
 
 
 def salvar_grade_amostras(estudo, dados, total: int) -> dict:
@@ -834,8 +887,11 @@ def salvar_grade_amostras(estudo, dados, total: int) -> dict:
             continue
 
         try:
-            valor_comp = _numero(bruto_comp)
-            valor_teste = _numero(bruto_teste)
+            valor_comp = converter_numero(bruto_comp)
+            valor_teste = converter_numero(bruto_teste)
+        except NumeroAmbiguo as ambiguo:
+            erros.append(f"Linha {posicao}: {ambiguo}")
+            continue
         except (InvalidOperation, ValueError):
             erros.append(f"Linha {posicao}: valor não numérico.")
             continue

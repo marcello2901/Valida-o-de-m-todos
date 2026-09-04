@@ -225,6 +225,10 @@
   .recado svg { flex-shrink: 0; margin-top: 1px; }
   .recado--success { border-color: #cfe8cf; background: var(--aprovado-fundo); color: #17520f; }
   .recado--warning { border-color: #ecdcb0; background: var(--atencao-fundo); color: var(--atencao-tinta); }
+  .aviso-colagem {
+    margin: 0 0 12px; padding: 10px 13px; border-radius: 8px; font-size: 12.5px;
+    border: 1px solid var(--acento-linha); background: var(--acento-fundo); color: #14416f;
+  }
   .recado--error { border-color: #f0cccc; background: #fdf3f3; color: #7a1f1f; }
 
   @media print {
@@ -289,5 +293,11 @@
     {% block corpo %}{% endblock %}
   </div>
 </div>
+{% comment %}
+  O programa não usa JavaScript para funcionar. As telas que carregam algo aqui
+  ganham uma conveniência a mais — colar da planilha — e continuam completas
+  sem ela.
+{% endcomment %}
+{% block scripts %}{% endblock %}
 </body>
 </html>
