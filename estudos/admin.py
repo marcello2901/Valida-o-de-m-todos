@@ -33,9 +33,19 @@ class SomenteLeituraAposLiberacao:
         return getattr(estudo, "situacao", None) == Estudo.LIBERADO
 
     def has_add_permission(self, request, obj=None):
+        """Assinaturas divergentes: ``ModelAdmin`` recebe só ``request``.
+
+        ``InlineModelAdmin.has_add_permission`` recebe ``(request, obj)``, mas
+        ``ModelAdmin.has_add_permission`` recebe apenas ``request`` — e este
+        mixin serve aos dois. Repassar ``obj`` para o ModelAdmin levantava
+        TypeError não na página do estudo, mas em **toda** página do painel:
+        o menu lateral chama ``get_model_perms`` de cada admin registrado.
+        """
         if obj is not None and self._liberado(obj):
             return False
-        return super().has_add_permission(request, obj)
+        if isinstance(self, admin.options.InlineModelAdmin):
+            return super().has_add_permission(request, obj)
+        return super().has_add_permission(request)
 
     def has_change_permission(self, request, obj=None):
         if obj is not None and self._liberado(obj):
