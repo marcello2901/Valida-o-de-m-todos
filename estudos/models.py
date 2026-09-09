@@ -420,12 +420,12 @@ class AmostraComparacao(models.Model):
     class Meta:
         verbose_name = "amostra de comparação"
         verbose_name_plural = "amostras de comparação"
+        # Sem unicidade da identificação de propósito. Duas amostras do mesmo
+        # código de barras acontecem na rotina — a mesma amostra corrida duas
+        # vezes, um código reaproveitado entre dias — e recusar o lançamento
+        # obrigaria o laboratório a inventar um identificador falso, que é pior
+        # para a rastreabilidade do que o código repetido.
         ordering = ["identificacao"]
-        constraints = [
-            models.UniqueConstraint(
-                fields=["estudo", "identificacao"], name="amostra_comparacao_unica_por_estudo"
-            )
-        ]
 
     def __str__(self):
         return f"{self.identificacao}: {self.valor_comparacao} → {self.valor_teste}"
@@ -481,6 +481,24 @@ class Veredito(models.Model):
     detalhamento = models.JSONField("detalhamento do cálculo", default=dict)
     versao_motor = models.CharField("versão do motor de cálculo", max_length=20, default=VERSAO_MOTOR)
 
+    # --- Conclusão do responsável -------------------------------------------
+    #
+    # O que os números não dizem. Um estudo reprovado num nível pode ter
+    # explicação — lote de controle no fim da validade, recalibração no meio da
+    # série — e um estudo aprovado pode ter ressalva. Sem este campo essa
+    # informação vive num e-mail que não acompanha o relatório.
+    #
+    # Editável depois do congelamento de propósito: a análise crítica amadurece
+    # enquanto o veredito, que é o retrato dos números, não muda. Cada edição vai
+    # para a trilha de auditoria, então o histórico não se perde.
+    analise_critica = models.TextField(
+        "conclusão / análise crítica", blank=True,
+        help_text="Observações, nuances e explicações que acompanham o relatório.",
+    )
+    analise_atualizada_em = models.DateTimeField(
+        "análise atualizada em", null=True, blank=True
+    )
+
     calculado_em = models.DateTimeField("calculado em", auto_now_add=True)
     liberado_por = models.ForeignKey(
         settings.AUTH_USER_MODEL, verbose_name="liberado por", on_delete=models.PROTECT,
@@ -498,6 +516,17 @@ class Veredito(models.Model):
 
     def liberado(self) -> bool:
         return self.liberado_em is not None
+
+    def analise_editada_apos_liberacao(self) -> bool:
+        """Diz se a conclusão mudou depois de o relatório ser assinado.
+
+        Não impede a edição — a análise crítica é justamente o que o responsável
+        continua amadurecendo — mas um leitor precisa saber que o texto que está
+        vendo não é o mesmo que estava lá no dia da assinatura.
+        """
+        if self.liberado_em is None or self.analise_atualizada_em is None:
+            return False
+        return self.analise_atualizada_em > self.liberado_em
 
     def maior_erro_total(self):
         """Maior erro total observado entre os níveis, lido do retrato congelado.

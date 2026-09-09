@@ -43,8 +43,13 @@
 
 {% block corpo %}
 <div class="barra">
-  <a href="{% url 'resultado_estudo' estudo.pk %}" class="botao" style="width: 34px; padding: 0; justify-content: center" title="Voltar ao resultado">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 6l-6 6 6 6"/></svg>
+  {% comment %}
+    Uma seta sem rótulo não é caminho de volta: o usuário chegou aqui pelo card
+    do quadro e não encontrava a tela de resultado. O botão diz para onde vai.
+  {% endcomment %}
+  <a href="{% url 'resultado_estudo' estudo.pk %}" class="botao" title="Ver o resultado desta validação">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 6l-6 6 6 6"/></svg>
+    Ver resultado
   </a>
   <div>
     <h1 class="display">Lançar réplicas de controle</h1>
@@ -73,13 +78,23 @@
       <section class="cartao pista">
         <div class="cabeca">
           <h2 class="display">Nível {{ coluna.nivel.numero }}</h2>
-          <p class="material">{{ coluna.nivel.controle.nome }} &middot; lote {{ coluna.nivel.controle.lote }}</p>
+          <p class="material">
+            {{ coluna.nivel.controle.nome }}<br>
+            lote {{ coluna.nivel.controle.lote }} &middot;
+            val. {{ coluna.nivel.controle.validade|date:"d/m/Y" }}
+            {% if coluna.nivel.controle.valor_alvo %}<br>valor alvo do fabricante {{ coluna.nivel.controle.valor_alvo|floatformat:"-4" }}{% endif %}
+          </p>
           {% comment %}
-            A média do grupo de pares fica aqui, e não noutra tela, porque é o
-            alvo do bias deste nível. Em branco, a exatidão não é avaliada.
+            Este campo é o que decide a exatidão, e é o que mais confundia: não é
+            o valor alvo da bula, é a média que OUTROS laboratórios obtiveram com
+            este mesmo lote. Dizer isso no rótulo custa uma linha.
           {% endcomment %}
           <div class="campo">
             <label for="alvo_{{ coluna.nivel.pk }}">Média interlaboratorial</label>
+            <p class="nota" style="margin: -1px 0 5px; text-transform: none; letter-spacing: 0; font-weight: 400">
+              Média deste mesmo lote no grupo de pares. É contra ela que a
+              exatidão é medida — não contra o valor alvo do fabricante.
+            </p>
             <div class="par">
               <input type="text" inputmode="decimal" id="alvo_{{ coluna.nivel.pk }}"
                      name="alvo_{{ coluna.nivel.pk }}"

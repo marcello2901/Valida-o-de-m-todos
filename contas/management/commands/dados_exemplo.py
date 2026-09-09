@@ -142,8 +142,6 @@ class Command(BaseCommand):
                 "papel": SistemaAnalitico.TESTE,
                 "equipamento": "Atellica",
                 "metodologia": "Quimioluminescência",
-                "intervalo_analitico_minimo": Decimal("0.1000"),
-                "intervalo_analitico_maximo": Decimal("12.0000"),
             },
         )
         comparacao, _ = SistemaAnalitico.objects.get_or_create(
@@ -153,8 +151,6 @@ class Command(BaseCommand):
                 "papel": SistemaAnalitico.COMPARACAO,
                 "equipamento": "Centaur XP",
                 "metodologia": "Quimioluminescência",
-                "intervalo_analitico_minimo": Decimal("0.1000"),
-                "intervalo_analitico_maximo": Decimal("12.0000"),
             },
         )
         return teste, comparacao
@@ -163,7 +159,12 @@ class Command(BaseCommand):
         Reagente.objects.get_or_create(
             sistema=teste,
             lote="34351224",
-            defaults={"nome": "Atellica IM T4 Livre", "validade": date(2026, 8, 25)},
+            defaults={
+                "nome": "Atellica IM T4 Livre", "mensurando": mensurando,
+                "validade": date(2026, 8, 25),
+                "intervalo_analitico_minimo": Decimal("0.1000"),
+                "intervalo_analitico_maximo": Decimal("12.0000"),
+            },
         )
         Calibrador.objects.get_or_create(
             sistema=teste,
@@ -173,7 +174,12 @@ class Command(BaseCommand):
         Reagente.objects.get_or_create(
             sistema=comparacao,
             lote="88120455",
-            defaults={"nome": "Centaur FT4", "validade": date(2026, 11, 30)},
+            defaults={
+                "nome": "Centaur FT4", "mensurando": mensurando,
+                "validade": date(2026, 11, 30),
+                "intervalo_analitico_minimo": Decimal("0.1500"),
+                "intervalo_analitico_maximo": Decimal("10.0000"),
+            },
         )
 
         for nivel, (nome, lote, alvo) in enumerate(

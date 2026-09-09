@@ -40,7 +40,7 @@ def _insumos_do_sistema(sistema, hoje):
     """Reagentes, calibradores e controles de um sistema, com a situação de cada."""
     itens = []
     for rotulo, consulta in (
-        ("Reagente", sistema.reagentes.all()),
+        ("Reagente", sistema.reagentes.select_related("mensurando")),
         ("Calibrador", sistema.calibradores.all()),
         ("Controle", sistema.controles.all()),
     ):
@@ -51,6 +51,8 @@ def _insumos_do_sistema(sistema, hoje):
                     "insumo": insumo,
                     "situacao": _situacao_do_insumo(insumo, hoje),
                     "analito": getattr(insumo, "mensurando", None),
+                    # O intervalo analítico é do ensaio, então só o reagente tem.
+                    "intervalo": getattr(insumo, "intervalo_escrito", lambda: "")(),
                 }
             )
     return sorted(itens, key=lambda item: item["situacao"]["dias"])
@@ -70,7 +72,7 @@ def configuracoes(request):
 
     sistemas = []
     for sistema in SistemaAnalitico.objects.filter(laboratorio=laboratorio).prefetch_related(
-        "reagentes", "calibradores", "controles__mensurando"
+        "reagentes__mensurando", "calibradores", "controles__mensurando"
     ):
         insumos = _insumos_do_sistema(sistema, hoje)
         sistemas.append(

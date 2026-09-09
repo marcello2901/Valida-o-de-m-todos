@@ -7,6 +7,7 @@ from django.contrib.auth.decorators import login_required
 from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from catalogo.models import Controle
@@ -122,6 +123,25 @@ def concluir(request, estudo_id: int):
 
 @login_required
 @require_POST
+def analise_critica(request, estudo_id: int):
+    """Grava a conclusão do responsável sobre o estudo."""
+    estudo = _estudo_do_usuario(request, estudo_id)
+    try:
+        efeito = servicos.registrar_analise_critica(
+            estudo, request.user, request.POST.get("analise_critica", "")
+        )
+    except servicos.AcaoRecusada as recusa:
+        messages.error(request, str(recusa))
+    else:
+        if efeito == "sem_mudanca":
+            messages.info(request, "A análise crítica não mudou.")
+        else:
+            messages.success(request, f"Análise crítica {efeito} e registrada na trilha.")
+    return redirect("resultado_estudo", estudo_id=estudo.pk)
+
+
+@login_required
+@require_POST
 def liberar(request, estudo_id: int):
     """Assina o veredito congelado. Só o responsável técnico."""
     estudo = _estudo_do_usuario(request, estudo_id)
@@ -132,6 +152,43 @@ def liberar(request, estudo_id: int):
     else:
         messages.success(request, "Relatório liberado e registrado na trilha de auditoria.")
     return redirect("resultado_estudo", estudo_id=estudo.pk)
+
+
+@login_required
+def relatorio(request, estudo_id: int):
+    """Relatório de validação, formatado para papel.
+
+    Sai em PDF pela caixa de impressão do navegador — não há biblioteca de PDF
+    no servidor, e não precisa haver: o navegador já sabe paginar HTML, e o
+    resultado é o mesmo arquivo em qualquer máquina, sem dependência de sistema
+    que possa quebrar numa atualização da hospedagem.
+
+    Exige um cálculo congelado. Um relatório de validação sem veredito assinado
+    é um rascunho, e imprimir rascunho com cara de documento é como um número
+    errado entra numa pasta de qualidade.
+    """
+    estudo = _estudo_do_usuario(request, estudo_id)
+
+    veredito = getattr(estudo, "veredito", None)
+    if veredito is None:
+        messages.error(
+            request,
+            "O relatório sai de um cálculo congelado. Use “Calcular e congelar” antes de imprimir.",
+        )
+        return redirect("resultado_estudo", estudo_id=estudo.pk)
+
+    contexto = servicos.calcular(estudo)
+    contexto["secao"] = "quadro"
+    contexto["congelado"] = veredito
+    contexto["emitido_em"] = timezone.now()
+    contexto["emitido_por"] = request.user
+    # Mesma checagem da tela de trabalho: se a ficha do analito mudou depois do
+    # congelamento, o relatório diz isso em vez de imprimir números que não
+    # batem com o veredito impresso ao lado.
+    contexto["divergencia"] = bool(
+        contexto.get("veredito") and veredito.resultado != contexto["veredito"]["status"]
+    )
+    return render(request, "estudos/relatorio.html", contexto)
 
 
 @login_required
@@ -163,17 +220,16 @@ def replicas(request, estudo_id: int):
             _salvar_medias_alvo(request, estudo)
             resumo = servicos.salvar_grade(estudo, request.POST)
             if resumo["erros"]:
-                for erro in resumo["erros"][:5]:
-                    messages.error(request, erro)
-                messages.error(
-                    request, "Nada foi gravado: corrija os valores acima e envie de novo."
-                )
+                _relatar_pendencias(request, resumo, "réplica")
             else:
                 messages.success(
                     request,
                     f"{resumo['gravadas']} réplica(s) gravada(s)"
                     + (f", {resumo['apagadas']} apagada(s)." if resumo["apagadas"] else "."),
                 )
+                # Gravou: mostra o efeito. Quem vai lançar mais volta pelo
+                # atalho da tela de resultado, que agora tem rótulo.
+                return redirect("resultado_estudo", estudo_id=estudo.pk)
         return redirect("replicas_estudo", estudo_id=estudo.pk)
 
     return render(
@@ -212,17 +268,14 @@ def amostras(request, estudo_id: int):
 
         resumo = servicos.salvar_grade_amostras(estudo, request.POST, total)
         if resumo["erros"]:
-            for erro in resumo["erros"][:5]:
-                messages.error(request, erro)
-            messages.error(
-                request, "Nada foi gravado: corrija as linhas acima e envie de novo."
-            )
+            _relatar_pendencias(request, resumo, "amostra")
         else:
             messages.success(
                 request,
                 f"{resumo['gravadas']} amostra(s) gravada(s)"
                 + (f", {resumo['apagadas']} apagada(s)." if resumo["apagadas"] else "."),
             )
+            return redirect("resultado_estudo", estudo_id=estudo.pk)
         return redirect("amostras_estudo", estudo_id=estudo.pk)
 
     grade = servicos.montar_grade_amostras(estudo, _inteiro(request.GET.get("linhas"), 0))
@@ -236,6 +289,28 @@ def amostras(request, estudo_id: int):
             "andamento": estudo.progresso(),
             "passo": servicos.PASSO_DE_LINHAS,
         },
+    )
+
+
+def _relatar_pendencias(request, resumo, unidade: str):
+    """Diz o que entrou e o que ficou de fora, sem desfazer o que entrou.
+
+    Antes o programa descartava o lote inteiro por causa de uma linha e
+    recarregava a página, com o que o usuário havia digitado indo junto. Agora o
+    que estava certo fica gravado e a mensagem lista o que precisa de correção —
+    o trabalho não se perde, e o que ficou de fora está nomeado, não implícito.
+    """
+    quantidade = len(resumo["erros"])
+    for erro in resumo["erros"][:5]:
+        messages.warning(request, erro)
+    if quantidade > 5:
+        messages.warning(request, f"…e mais {quantidade - 5} linha(s) com o mesmo tipo de problema.")
+
+    messages.warning(
+        request,
+        f"{resumo['gravadas']} {unidade}(s) gravada(s). "
+        f"{quantidade} linha(s) não pôde(puderam) ser processada(s) e continuam "
+        "em branco — corrija e envie de novo.",
     )
 
 

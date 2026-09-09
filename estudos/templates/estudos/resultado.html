@@ -116,6 +116,12 @@
       </button>
     </form>
     {% endif %}
+    {% if estudo.veredito %}
+    <a href="{% url 'relatorio_estudo' estudo.pk %}" class="botao" style="margin-left: 8px">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V3h12v6"/><rect x="3" y="9" width="18" height="8" rx="2"/><path d="M7 17h10v4H7z"/></svg>
+      Relatório
+    </a>
+    {% endif %}
     {% if estudo.veredito and estudo.situacao != "liberado" and pode_assinar %}
     <form method="post" action="{% url 'liberar_estudo' estudo.pk %}" style="margin-left: 8px">
       {% csrf_token %}
@@ -227,7 +233,11 @@
           <div class="display" style="font-size: 15px; font-weight: 600; margin: 4px 0 2px">{{ estudo.sistema_teste.equipamento }}</div>
           <div class="fonte">
             Série {{ estudo.sistema_teste.numero_serie }} &middot; {{ estudo.sistema_teste.metodologia }}
-            {% if estudo.sistema_teste.intervalo_analitico_minimo %} &middot; {{ estudo.sistema_teste.intervalo_analitico_minimo }} a {{ estudo.sistema_teste.intervalo_analitico_maximo }}{% endif %}
+            {% comment %}
+              A faixa vem do kit, não da máquina: é o ensaio que mede de tanto a
+              tanto, e trocar o lote pode mudar isso.
+            {% endcomment %}
+            {% if reagentes.teste.tem_intervalo %} &middot; mede de {{ reagentes.teste.intervalo_escrito }} (lote {{ reagentes.teste.lote }}){% endif %}
           </div>
         </div>
         {% if estudo.sistema_comparacao %}
@@ -236,7 +246,7 @@
           <div class="display" style="font-size: 15px; font-weight: 600; margin: 4px 0 2px">{{ estudo.sistema_comparacao.equipamento }}</div>
           <div class="fonte">
             Série {{ estudo.sistema_comparacao.numero_serie }} &middot; {{ estudo.sistema_comparacao.metodologia }}
-            {% if estudo.sistema_comparacao.intervalo_analitico_minimo %} &middot; {{ estudo.sistema_comparacao.intervalo_analitico_minimo }} a {{ estudo.sistema_comparacao.intervalo_analitico_maximo }}{% endif %}
+            {% if reagentes.comparacao.tem_intervalo %} &middot; mede de {{ reagentes.comparacao.intervalo_escrito }} (lote {{ reagentes.comparacao.lote }}){% endif %}
           </div>
         </div>
         {% endif %}
@@ -298,11 +308,11 @@
     </details>
 
 {% else %}
-    <!-- 4. Precisão -->
+    <!-- 4. Precisão e exatidão -->
     <details class="cartao faixa" open>
       <summary>
         <span class="marcador {% if andamento.precisao_pct == 100 %}marcador--pronto{% else %}marcador--corrente{% endif %}">{% if andamento.precisao_pct == 100 %}&#10003;{% else %}4{% endif %}</span>
-        <span class="titulo-faixa">Precisão</span>
+        <span class="titulo-faixa">Precisão e exatidão</span>
         <span class="resumo">{{ estudo.get_desenho_precisao_display }}</span>
         <span class="num" style="font-size: 11.5px; font-weight: 600; color: var(--acento); flex-shrink: 0">
           {{ andamento.precisao_feita }} de {{ andamento.precisao_total }} réplicas
@@ -311,12 +321,41 @@
       </summary>
       <div class="corpo">
         {% if precisao %}
+        {% comment %}
+          Dois números que vêm do mesmo frasco e respondem perguntas diferentes.
+          O laboratório confundia os dois; dizer isso na tela custa três linhas
+          e evita o estudo inteiro sair errado.
+        {% endcomment %}
+        <div class="caixa" style="margin-bottom: 14px">
+          <div class="rotulo">Como esta faixa é lida</div>
+          <p class="nota" style="margin: 6px 0 0; line-height: 1.55">
+            <strong>Precisão</strong> é a dispersão das suas próprias réplicas: o CV
+            agrupado das corridas contra o CV máximo do nível.<br>
+            <strong>Exatidão</strong> é a sua média global comparada com a
+            <strong>média interlaboratorial</strong> — o mesmo lote de controle, medido
+            por outros laboratórios no programa de pares. Se a diferença percentual
+            passar do bias máximo, a exatidão reprova.
+          </p>
+          <p class="nota" style="margin: 8px 0 0">
+            O <em>valor alvo</em> do frasco (bula do fabricante) serve à rastreabilidade
+            do material e não entra nesta conta.
+          </p>
+        </div>
         {% for item in precisao %}
         <div class="nivel">
-          <h3 style="font-size: 13px; margin: 0 0 9px; display: flex; align-items: center; gap: 8px">
+          <h3 style="font-size: 13px; margin: 0 0 3px; display: flex; align-items: center; gap: 8px">
             Nível {{ item.numero }} &mdash; {{ item.nivel.controle.nome }}
             {% if item.avaliacao.status %}<span class="estado estado--{{ item.avaliacao.status }}">{{ item.avaliacao.status }}</span>{% endif %}
           </h3>
+          <p class="nota" style="margin: 0 0 9px">
+            Lote {{ item.nivel.controle.lote }} &middot;
+            validade {{ item.nivel.controle.validade|date:"d/m/Y" }}
+            {% if item.nivel.controle.valor_alvo %} &middot; valor alvo do fabricante {{ item.nivel.controle.valor_alvo|floatformat:"-4" }}{% endif %}
+            {% if item.nivel.media_interlaboratorial %}
+              &middot; média interlaboratorial {{ item.nivel.media_interlaboratorial|floatformat:"-4" }}
+              {% if item.origem_do_alvo %}({{ item.origem_do_alvo }}){% endif %}
+            {% endif %}
+          </p>
 
           {% comment %}Estatística de cada corrida: é a leitura do dia.{% endcomment %}
           <table style="margin-bottom: 10px">
@@ -343,7 +382,7 @@
           </table>
 
           <table>
-            <tr><th>Avaliação</th><th class="n">Obtido</th><th class="n">Referência</th><th class="n">Limite</th><th>Situação</th></tr>
+            <tr><th>Avaliação</th><th class="n">Obtido</th><th class="n">Comparado com</th><th class="n">Limite</th><th>Situação</th></tr>
             {% for indicador in item.avaliacao.indicadores %}{% if indicador.indicador == "imprecisão" %}
             <tr>
               <td>Imprecisão &mdash; {{ item.estatistica.tipo_cv_aplicavel|default:"CV" }}</td>
@@ -361,8 +400,19 @@
             {% if item.bias.avaliavel %}
             <tr>
               <td>
-                Bias &mdash; {% if item.origem_do_bias == "interlaboratorial" %}{{ item.origem_do_alvo }}{% else %}reta de regressão{% endif %}
-                <div class="nota">absoluto {{ item.bias.absoluto|floatformat:4 }}</div>
+                {% if item.origem_do_bias == "interlaboratorial" %}
+                  Exatidão &mdash; média das réplicas vs. interlaboratorial
+                  <div class="nota">
+                    {{ item.bias.media_obtida|floatformat:4 }} &minus; {{ item.bias.media_alvo|floatformat:4 }}
+                    = {{ item.bias.absoluto|floatformat:4 }} ({{ item.origem_do_alvo }})
+                  </div>
+                {% else %}
+                  Exatidão &mdash; estimada pela reta de regressão
+                  <div class="nota">
+                    sem média interlaboratorial neste nível &middot;
+                    absoluto {{ item.bias.absoluto|floatformat:4 }}
+                  </div>
+                {% endif %}
               </td>
               <td class="n"><strong>{{ item.bias.relativo_pct|floatformat:2 }}%</strong></td>
               <td class="n">{{ item.bias.media_alvo|floatformat:3|default:"—" }}</td>
@@ -373,10 +423,11 @@
             </tr>
             {% else %}
             <tr>
-              <td>Bias</td>
+              <td>Exatidão</td>
               <td class="n" colspan="4" style="text-align: left; color: var(--atencao-tinta)">
-                Exatidão não avaliada &mdash; informe a média do estudo interlaboratorial
-                (e-Lab, Unity, fleet) para este nível.
+                Não avaliada &mdash; informe a média que os outros laboratórios obtiveram
+                com este mesmo lote de controle (e-Lab, Unity, fleet) na tela de
+                lançamento de réplicas.
               </td>
             </tr>
             {% endif %}
@@ -415,20 +466,38 @@
           {% with c=comparabilidade %}
           <table>
             <tr><th>Medida</th><th class="n">Resultado</th><th>Leitura</th></tr>
+            {% comment %}
+              A razão das médias é o resumo do erro sistemático do conjunto, e é
+              ela que se compara com o bias máximo do analito. O limite aparece
+              na leitura porque um percentual sem o limite ao lado não permite
+              concluir nada.
+            {% endcomment %}
             <tr>
-              <td>Erro sistemático médio</td>
-              <td class="n">{{ c.erro_sistematico.erro_medio|floatformat:4|default:"—" }}</td>
-              <td class="nota">média das diferenças percentuais: {{ c.erro_sistematico.erro_medio_pct|floatformat:2|default:"—" }}% &middot; razão das médias: {{ c.erro_sistematico.erro_medio_pct_ponderado|floatformat:2|default:"—" }}%</td>
+              <td>
+                Razão das médias
+                {% if c.razao_avaliacao.status %}
+                <span class="estado estado--{{ c.razao_avaliacao.status }}" style="border: none; padding: 0; margin-left: 6px">{{ c.razao_avaliacao.status }}</span>
+                {% endif %}
+              </td>
+              <td class="n">
+                <strong>{{ c.razao_das_medias.desvio_pct|floatformat:2|default:"—" }}%</strong>
+              </td>
+              <td class="nota">
+                Razão das médias, valor a ser comparado com
+                {% if c.bias_maximo_pct %}
+                  <strong>[Bias máximo {{ c.bias_maximo_pct|floatformat:2 }}%]</strong>
+                {% else %}
+                  <strong style="color: var(--atencao-tinta)">[bias máximo não definido na ficha]</strong>
+                {% endif %}
+                &middot; {{ c.razao_das_medias.media_teste|floatformat:3|default:"—" }} ÷
+                {{ c.razao_das_medias.media_comparacao|floatformat:3|default:"—" }} =
+                {{ c.razao_das_medias.razao|floatformat:4|default:"—" }}
+              </td>
             </tr>
             <tr>
               <td>Regressão de Deming</td>
               <td class="n">y = {{ c.deming.inclinacao|floatformat:4|default:"—" }}x {% if c.deming.intercepto >= 0 %}+{% endif %} {{ c.deming.intercepto|floatformat:4|default:"—" }}</td>
               <td class="nota">admite erro nos dois eixos — é a que julga erro proporcional</td>
-            </tr>
-            <tr>
-              <td>Regressão de Passing-Bablok</td>
-              <td class="n">y = {{ c.passing_bablok.inclinacao|floatformat:4|default:"—" }}x {% if c.passing_bablok.intercepto >= 0 %}+{% endif %} {{ c.passing_bablok.intercepto|floatformat:4|default:"—" }}</td>
-              <td class="nota">não paramétrica, resistente a valores discrepantes</td>
             </tr>
             <tr>
               <td>Regressão linear simples</td>
@@ -526,45 +595,59 @@
       </div>
     </details>
 
-    <!-- 6. Veredito -->
-    <details class="cartao faixa" open>
+{% endif %}
+
+    {% comment %}
+      Conclusão / análise crítica. Só aparece depois do congelamento, porque é
+      leitura de um resultado — antes disso não há resultado para ler. Continua
+      editável depois, inclusive após a liberação: os números do veredito são o
+      retrato e não mudam; a leitura que o responsável faz deles amadurece.
+    {% endcomment %}
+    {% if estudo.veredito %}
+    <details class="cartao faixa" open id="analise">
       <summary>
-        <span class="marcador {% if veredito.status == 'APROVADO' %}marcador--pronto{% elif veredito.status == 'REPROVADO' %}marcador--corrente{% else %}marcador--espera{% endif %}">6</span>
-        <span class="titulo-faixa">Veredito por nível</span>
-        <span class="resumo">Cada indicador contra o seu limite, com o critério</span>
-        <span class="estado estado--{{ veredito.status }}" style="border: none; padding: 0">{{ veredito.status }}</span>
+        <span class="marcador {% if estudo.veredito.analise_critica %}marcador--pronto{% else %}marcador--corrente{% endif %}">
+          {% if estudo.veredito.analise_critica %}&#10003;{% else %}!{% endif %}
+        </span>
+        <span class="titulo-faixa">Conclusão / análise crítica</span>
+        <span class="resumo">
+          {% if estudo.veredito.analise_critica %}
+            Escrita em {{ estudo.veredito.analise_atualizada_em|date:"d/m/Y H:i" }}
+          {% else %}
+            O que os números não dizem — e o relatório precisa registrar
+          {% endif %}
+        </span>
         <svg class="seta" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--tinta-3)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>
       </summary>
       <div class="corpo">
-        {% for avaliacao in veredito.niveis %}
-        <div class="nivel">
-          <h3 style="font-size: 13px; margin: 0 0 8px">
-            Nível {{ avaliacao.nivel }} — concentração {{ avaliacao.concentracao|floatformat:3|default:"—" }}
-            <span class="estado estado--{{ avaliacao.status }}">{{ avaliacao.status }}</span>
-          </h3>
-          <table>
-            <tr><th>Indicador</th><th class="n">Observado</th><th class="n">Limite</th><th>Critério</th><th>Situação</th></tr>
-            {% for indicador in avaliacao.indicadores %}
-            <tr>
-              <td>{{ indicador.indicador|capfirst }}</td>
-              <td class="n">{{ indicador.observado_pct|floatformat:2|default:"—" }}{% if indicador.observado_pct != None %}%{% endif %}</td>
-              <td class="n">{{ indicador.limite_pct|floatformat:2|default:"—" }}{% if indicador.limite_pct != None %}%{% endif %}</td>
-              <td class="nota">{{ indicador.tipo_limite }} — {{ indicador.referencia|default:"sem referência declarada" }}</td>
-              <td><span class="estado estado--{{ indicador.status }}" style="border: none; padding: 0">{{ indicador.status }}</span>{% if indicador.motivo %}<br><span class="nota">{{ indicador.motivo }}</span>{% endif %}</td>
-            </tr>
-            {% endfor %}
-          </table>
-          <p class="nota" style="margin-top: 6px">
-            Métrica Sigma: <strong>{{ avaliacao.sigma|floatformat:1|default:"—" }}</strong> — {{ avaliacao.classificacao_sigma }}
-            {% if avaliacao.nao_contratados %}<br>Não avaliado neste módulo: {{ avaliacao.nao_contratados|join:", " }}.{% endif %}
-          </p>
+        {% if estudo.veredito.analise_editada_apos_liberacao %}
+        <div class="aviso" style="margin-bottom: 12px">
+          Esta conclusão foi editada em
+          <strong>{{ estudo.veredito.analise_atualizada_em|date:"d/m/Y H:i" }}</strong>, depois da
+          liberação de {{ estudo.veredito.liberado_em|date:"d/m/Y" }}. Os números do veredito não
+          mudaram; o texto, sim. A edição está na trilha de auditoria.
         </div>
-        {% empty %}
-        <p class="vazio">Nenhum nível avaliado.</p>
-        {% endfor %}
+        {% endif %}
+
+        <form method="post" action="{% url 'analise_estudo' estudo.pk %}">
+          {% csrf_token %}
+          <textarea name="analise_critica" rows="8"
+                    placeholder="Ex.: o nível 1 reprovou na exatidão. O lote de controle CT1-2026A estava a 12 dias do vencimento e o frasco havia sido aberto na semana anterior. Repetido com lote novo, o desvio caiu para 2,1%. Mantido o método."
+                    aria-label="Conclusão e análise crítica do estudo">{{ estudo.veredito.analise_critica }}</textarea>
+          <div style="display: flex; align-items: center; gap: 12px; margin-top: 11px">
+            <button type="submit" class="botao">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7"/></svg>
+              Salvar conclusão
+            </button>
+            <span class="nota">
+              Vai para o relatório em PDF, abaixo dos resultados. Pode ser editada
+              a qualquer momento — cada edição fica registrada.
+            </span>
+          </div>
+        </form>
       </div>
     </details>
-{% endif %}
+    {% endif %}
 
     <section class="cartao" style="padding: 15px 18px">
       <p class="nota" style="margin: 0 0 8px">

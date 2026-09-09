@@ -13,6 +13,7 @@ from django.urls import reverse
 
 from catalogo.models import (
     Controle,
+    Reagente,
     EspecificacaoQualidade,
     LimiteImprecisao,
     Mensurando,
@@ -57,6 +58,19 @@ def montar_estudo(laboratorio: Laboratorio, usuario: Usuario) -> Estudo:
     controle = Controle.objects.create(
         sistema=teste, nivel=1, nome="Controle 1", lote="L1",
         validade=date(2027, 1, 1), valor_alvo=Decimal("1.3"),
+    )
+    # O fixture precisa de reagente: sem ele, um estudo de teste não exercita o
+    # caminho do intervalo analítico nem o do retrato congelado, e um objeto do
+    # banco vazando para dentro do JSON passava despercebido.
+    Reagente.objects.create(
+        sistema=teste, mensurando=mensurando, nome="Kit FT4", lote="R1",
+        validade=date(2027, 6, 30),
+        intervalo_analitico_minimo=Decimal("0.1"), intervalo_analitico_maximo=Decimal("12.0"),
+    )
+    Reagente.objects.create(
+        sistema=comparacao, mensurando=mensurando, nome="Kit FT4 comparador", lote="R2",
+        validade=date(2027, 6, 30),
+        intervalo_analitico_minimo=Decimal("0.15"), intervalo_analitico_maximo=Decimal("10.0"),
     )
     especificacao = EspecificacaoQualidade.objects.create(
         laboratorio=laboratorio, mensurando=mensurando, nome="FT4 — ControlLab",
@@ -160,11 +174,15 @@ class TestConteudoDoResultado(TestCase):
             "Analito e limites",
             "Sistemas analíticos",
             "Insumos e controles",
-            "Precisão",
+            "Precisão e exatidão",
             "Comparabilidade",
-            "Veredito por nível",
         ]:
             self.assertContains(self.resposta, faixa)
+
+    def test_nao_traz_mais_a_faixa_de_veredito_por_nivel(self):
+        # Ela repetia, indicador por indicador, o que as faixas de precisão e
+        # comparabilidade já mostram com o limite ao lado.
+        self.assertNotContains(self.resposta, "Veredito por nível")
 
     def test_as_faixas_resolvidas_nascem_fechadas(self):
         # Só a etapa corrente abre sozinha: é isso que faz a tela caber num olhar.
@@ -174,9 +192,8 @@ class TestConteudoDoResultado(TestCase):
 
     def test_traz_as_medidas_pedidas(self):
         for medida in [
-            "Erro sistemático médio",
+            "Razão das médias",
             "Regressão de Deming",
-            "Passing-Bablok",
             "Concordância de Lin",
             "Concordância analítica",
             "Concordância clínica",
@@ -479,9 +496,9 @@ class TestGradeDeReplicas(TestCase):
 
         self.assertEqual(Replica.objects.filter(nivel=self.nivel).count(), antes - 1)
 
-    def test_valor_ilegivel_nao_grava_nada(self):
-        # Tudo ou nada: gravar metade de uma corrida e recusar o resto deixaria o
-        # laboratório com um estudo pela metade sem perceber.
+    def test_valor_ilegivel_nao_derruba_os_valores_bons(self):
+        # Descartar as 74 réplicas boas por causa da 75ª é perder o trabalho de
+        # cinco dias por um dígito. A ruim volta nomeada; a boa fica gravada.
         antes = Replica.objects.filter(nivel=self.nivel).count()
 
         resposta = self.client.post(
@@ -490,8 +507,9 @@ class TestGradeDeReplicas(TestCase):
             follow=True,
         )
 
-        self.assertEqual(Replica.objects.filter(nivel=self.nivel).count(), antes)
+        self.assertEqual(Replica.objects.filter(nivel=self.nivel).count(), antes + 1)
         self.assertContains(resposta, "não é um número")
+        self.assertContains(resposta, "não pôde")
 
     def test_replica_excluida_com_justificativa_nao_e_alterada(self):
         alvo = Replica.objects.get(nivel=self.nivel, corrida=1, sequencia=1)
@@ -715,35 +733,43 @@ class TestGradeDeAmostras(TestCase):
         self.assertEqual(self.estudo.amostras_comparacao.count(), antes)
         self.assertContains(resposta, "nos dois sistemas")
 
-    def test_identificacao_repetida_e_recusada_com_as_linhas(self):
-        resposta = self.client.post(
+    def test_codigo_de_barras_repetido_e_aceito(self):
+        # Acontece na rotina: a mesma amostra corrida duas vezes, um código
+        # reaproveitado entre dias. Recusar obrigaria a inventar um
+        # identificador falso — pior para a rastreabilidade que o repetido.
+        self.client.post(
             self.url,
             {
                 "total": "40",
-                "amostra_11_id": "DUPLA", "amostra_11_comparacao": "1", "amostra_11_teste": "1",
-                "amostra_12_id": "DUPLA", "amostra_12_comparacao": "2", "amostra_12_teste": "2",
+                "amostra_11_id": "250443609701", "amostra_11_comparacao": "1", "amostra_11_teste": "1",
+                "amostra_12_id": "250443609701", "amostra_12_comparacao": "2", "amostra_12_teste": "2",
             },
-            follow=True,
         )
 
-        self.assertContains(resposta, "repete a da linha 11")
-        self.assertFalse(
-            AmostraComparacao.objects.filter(estudo=self.estudo, identificacao="DUPLA").exists()
+        repetidas = AmostraComparacao.objects.filter(
+            estudo=self.estudo, identificacao="250443609701"
+        )
+        self.assertEqual(repetidas.count(), 2)
+        self.assertEqual(
+            sorted(str(a.valor_comparacao) for a in repetidas), ["1.0000", "2.0000"]
         )
 
-    def test_valor_ilegivel_nao_grava_nada(self):
+    def test_valor_ilegivel_deixa_as_linhas_boas_entrarem(self):
         antes = self.estudo.amostras_comparacao.count()
 
-        self.client.post(
+        resposta = self.client.post(
             self.url,
             {
                 "total": "40",
                 "amostra_11_comparacao": "1", "amostra_11_teste": "1",
                 "amostra_12_comparacao": "abc", "amostra_12_teste": "2",
             },
+            follow=True,
         )
 
-        self.assertEqual(self.estudo.amostras_comparacao.count(), antes)
+        self.assertEqual(self.estudo.amostras_comparacao.count(), antes + 1)
+        self.assertContains(resposta, "Linha 12")
+        self.assertContains(resposta, "não pôde")
 
     def test_campos_em_branco_apagam_a_amostra(self):
         antes = self.estudo.amostras_comparacao.count()
@@ -900,3 +926,392 @@ class TestLeituraDeNumeroBrasileiro(TestCase):
 
         gravada = AmostraComparacao.objects.get(estudo=estudo, identificacao="AM-011")
         self.assertEqual(gravada.valor_comparacao, Decimal("1234.5000"))
+
+
+class TestLeituraDaRazaoDasMedias(TestCase):
+    """A razão das médias e o limite com que ela se compara, lado a lado."""
+
+    def setUp(self):
+        self.laboratorio = montar_laboratorio("Lab A", "11.111.111/0001-11")
+        self.usuario = Usuario.objects.create_user(
+            username="analista", password="senha-longa-de-teste", laboratorio=self.laboratorio
+        )
+        self.estudo = montar_estudo(self.laboratorio, self.usuario)
+        self.client.force_login(self.usuario)
+        self.url = reverse("resultado_estudo", args=[self.estudo.pk])
+
+    def test_a_leitura_cita_o_bias_maximo_da_ficha(self):
+        resposta = self.client.get(self.url)
+
+        self.assertContains(resposta, "Razão das médias, valor a ser comparado com")
+        self.assertContains(resposta, "[Bias máximo 6,00%]")
+
+    def test_sem_bias_na_ficha_a_leitura_diz_o_que_falta(self):
+        ficha = self.estudo.especificacao
+        ficha.bias_derivado = False
+        ficha.bias_maximo_pct = None
+        ficha.save()
+
+        resposta = self.client.get(self.url)
+
+        self.assertContains(resposta, "bias máximo não definido na ficha")
+
+    def test_passing_bablok_saiu_da_tela_e_do_calculo(self):
+        resposta = self.client.get(self.url)
+
+        self.assertNotContains(resposta, "Passing")
+        self.assertNotIn("passing_bablok", servicos.calcular(self.estudo)["comparabilidade"])
+
+
+class TestNavegacaoEntreGradeEResultado(TestCase):
+    """O caminho de ida e volta entre as grades e a tela de resultado.
+
+    O card do quadro leva à grade que falta preencher, e de lá não havia como
+    chegar ao resultado: só uma seta sem rótulo, que ninguém reconhecia como
+    caminho de volta.
+    """
+
+    def setUp(self):
+        self.laboratorio = montar_laboratorio("Lab A", "11.111.111/0001-11")
+        self.usuario = Usuario.objects.create_user(
+            username="analista", password="senha-longa-de-teste", laboratorio=self.laboratorio
+        )
+        self.estudo = montar_estudo(self.laboratorio, self.usuario)
+        self.nivel = self.estudo.niveis.get(numero=1)
+        self.client.force_login(self.usuario)
+
+    def test_a_grade_de_replicas_oferece_o_resultado_com_rotulo(self):
+        resposta = self.client.get(reverse("replicas_estudo", args=[self.estudo.pk]))
+
+        self.assertContains(resposta, "Ver resultado")
+        self.assertContains(resposta, reverse("resultado_estudo", args=[self.estudo.pk]))
+
+    def test_a_grade_de_amostras_oferece_o_resultado_com_rotulo(self):
+        resposta = self.client.get(reverse("amostras_estudo", args=[self.estudo.pk]))
+
+        self.assertContains(resposta, "Ver resultado")
+
+    def test_salvar_replicas_leva_ao_resultado(self):
+        resposta = self.client.post(
+            reverse("replicas_estudo", args=[self.estudo.pk]),
+            {f"nivel_{self.nivel.pk}_26": "1,33"},
+        )
+
+        self.assertRedirects(resposta, reverse("resultado_estudo", args=[self.estudo.pk]))
+
+    def test_salvar_amostras_leva_ao_resultado(self):
+        resposta = self.client.post(
+            reverse("amostras_estudo", args=[self.estudo.pk]),
+            {"total": "40", "amostra_11_comparacao": "1", "amostra_11_teste": "1"},
+        )
+
+        self.assertRedirects(resposta, reverse("resultado_estudo", args=[self.estudo.pk]))
+
+    def test_com_erro_a_grade_nao_manda_para_o_resultado(self):
+        # Quem tem o que corrigir precisa ficar onde estão os campos.
+        resposta = self.client.post(
+            reverse("replicas_estudo", args=[self.estudo.pk]),
+            {f"nivel_{self.nivel.pk}_26": "abc"},
+        )
+
+        self.assertRedirects(resposta, reverse("replicas_estudo", args=[self.estudo.pk]))
+
+    def test_acrescentar_linhas_nao_manda_para_o_resultado(self):
+        resposta = self.client.post(
+            reverse("amostras_estudo", args=[self.estudo.pk]),
+            {"acao": "adicionar_linhas", "total": "40"},
+        )
+
+        self.assertIn("linhas=50", resposta["Location"])
+
+
+class TestAnaliseCritica(TestCase):
+    """A conclusão do responsável, que acompanha o relatório."""
+
+    def setUp(self):
+        self.laboratorio = montar_laboratorio("Lab A", "11.111.111/0001-11")
+        self.usuario = Usuario.objects.create_user(
+            username="responsavel", password="senha-longa-de-teste",
+            laboratorio=self.laboratorio, funcao=Usuario.RESPONSAVEL,
+        )
+        self.estudo = montar_estudo(self.laboratorio, self.usuario)
+        self.client.force_login(self.usuario)
+        self.url = reverse("analise_estudo", args=[self.estudo.pk])
+
+    def calcular(self):
+        self.client.post(reverse("concluir_estudo", args=[self.estudo.pk]))
+        self.estudo.refresh_from_db()
+
+    def test_a_caixa_so_aparece_depois_do_congelamento(self):
+        # Antes do cálculo não há resultado para analisar criticamente.
+        antes = self.client.get(reverse("resultado_estudo", args=[self.estudo.pk]))
+        self.assertNotContains(antes, "Conclusão / análise crítica")
+
+        self.calcular()
+
+        depois = self.client.get(reverse("resultado_estudo", args=[self.estudo.pk]))
+        self.assertContains(depois, "Conclusão / análise crítica")
+
+    def test_grava_o_texto_no_veredito(self):
+        self.calcular()
+
+        self.client.post(self.url, {"analise_critica": "Lote no fim da validade."})
+
+        self.estudo.refresh_from_db()
+        self.assertEqual(self.estudo.veredito.analise_critica, "Lote no fim da validade.")
+        self.assertIsNotNone(self.estudo.veredito.analise_atualizada_em)
+
+    def test_sem_calculo_a_analise_e_recusada(self):
+        resposta = self.client.post(self.url, {"analise_critica": "algo"}, follow=True)
+
+        self.assertContains(resposta, "Calcule o estudo primeiro")
+
+    def test_continua_editavel_depois_do_congelamento(self):
+        self.calcular()
+        self.client.post(self.url, {"analise_critica": "Primeira leitura."})
+
+        self.client.post(self.url, {"analise_critica": "Segunda leitura, mais completa."})
+
+        self.estudo.refresh_from_db()
+        self.assertEqual(
+            self.estudo.veredito.analise_critica, "Segunda leitura, mais completa."
+        )
+
+    def test_editar_depois_da_liberacao_e_permitido_e_sinalizado(self):
+        # A análise crítica amadurece; os números do veredito não mudam. Mas o
+        # leitor precisa saber que o texto não é o do dia da assinatura.
+        self.calcular()
+        self.client.post(reverse("liberar_estudo", args=[self.estudo.pk]))
+
+        self.client.post(self.url, {"analise_critica": "Revisto após a auditoria interna."})
+
+        self.estudo.refresh_from_db()
+        self.assertTrue(self.estudo.veredito.analise_editada_apos_liberacao())
+        resposta = self.client.get(reverse("resultado_estudo", args=[self.estudo.pk]))
+        self.assertContains(resposta, "depois da")
+
+    def test_cada_edicao_vai_para_a_trilha(self):
+        self.calcular()
+
+        self.client.post(self.url, {"analise_critica": "Primeira."})
+        self.client.post(self.url, {"analise_critica": "Segunda."})
+
+        self.assertTrue(RegistroAuditoria.objects.filter(acao="escreveu a análise crítica").exists())
+        self.assertTrue(RegistroAuditoria.objects.filter(acao="editou a análise crítica").exists())
+
+    def test_texto_igual_nao_gera_registro(self):
+        self.calcular()
+        self.client.post(self.url, {"analise_critica": "Mesma coisa."})
+        antes = RegistroAuditoria.objects.count()
+
+        self.client.post(self.url, {"analise_critica": "Mesma coisa."})
+
+        self.assertEqual(RegistroAuditoria.objects.count(), antes)
+
+    def test_recalcular_nao_apaga_a_analise(self):
+        # Recalcular substitui o retrato dos números. A leitura que o
+        # responsável escreveu sobre o estudo não é um número.
+        self.calcular()
+        self.client.post(self.url, {"analise_critica": "Vale para este estudo."})
+
+        self.client.post(reverse("concluir_estudo", args=[self.estudo.pk]))
+
+        self.estudo.refresh_from_db()
+        self.assertEqual(self.estudo.veredito.analise_critica, "Vale para este estudo.")
+
+    def test_laboratorio_alheio_nao_escreve(self):
+        self.calcular()
+        outro = montar_laboratorio("Lab B", "22.222.222/0001-22")
+        intruso = Usuario.objects.create_user(
+            username="intruso", password="senha-longa-de-teste", laboratorio=outro
+        )
+        self.client.force_login(intruso)
+
+        self.assertEqual(self.client.post(self.url, {"analise_critica": "x"}).status_code, 404)
+
+
+class TestRelatorio(TestCase):
+    """O relatório impresso: sai de um cálculo congelado, ou não sai."""
+
+    def setUp(self):
+        self.laboratorio = montar_laboratorio("Lab A", "11.111.111/0001-11")
+        self.usuario = Usuario.objects.create_user(
+            username="responsavel", password="senha-longa-de-teste",
+            laboratorio=self.laboratorio, funcao=Usuario.RESPONSAVEL,
+        )
+        self.estudo = montar_estudo(self.laboratorio, self.usuario)
+        self.client.force_login(self.usuario)
+        self.url = reverse("relatorio_estudo", args=[self.estudo.pk])
+
+    def calcular(self):
+        self.client.post(reverse("concluir_estudo", args=[self.estudo.pk]))
+        self.estudo.refresh_from_db()
+
+    def test_sem_calculo_congelado_o_relatorio_nao_sai(self):
+        # Imprimir rascunho com cara de documento é como um número errado entra
+        # numa pasta de qualidade.
+        resposta = self.client.get(self.url, follow=True)
+
+        self.assertContains(resposta, "Calcular e congelar")
+        self.assertContains(resposta, "sai de um cálculo congelado")
+
+    def test_traz_rastreabilidade_resultados_e_veredito(self):
+        self.calcular()
+
+        resposta = self.client.get(self.url)
+
+        self.assertEqual(resposta.status_code, 200)
+        for parte in [
+            "Relatório de validação de método analítico",
+            "Especificação da qualidade analítica",
+            "Rastreabilidade",
+            "Precisão e exatidão",
+            "Comparabilidade",
+            "Conclusão / análise crítica",
+            "Veredito",
+        ]:
+            self.assertContains(resposta, parte)
+
+    def test_a_conclusao_escrita_aparece_no_relatorio(self):
+        self.calcular()
+        self.client.post(
+            reverse("analise_estudo", args=[self.estudo.pk]),
+            {"analise_critica": "Controle no fim da validade; repetido com lote novo."},
+        )
+
+        resposta = self.client.get(self.url)
+
+        self.assertContains(resposta, "Controle no fim da validade")
+
+    def test_sem_conclusao_o_relatorio_diz_que_falta(self):
+        self.calcular()
+
+        resposta = self.client.get(self.url)
+
+        self.assertContains(resposta, "Nenhuma conclusão registrada")
+
+    def test_nao_traz_o_veredito_por_nivel(self):
+        self.calcular()
+
+        resposta = self.client.get(self.url)
+
+        self.assertNotContains(resposta, "Veredito por nível")
+
+    def test_nao_traz_passing_bablok(self):
+        self.calcular()
+
+        self.assertNotContains(self.client.get(self.url), "Passing")
+
+    def test_o_botao_do_relatorio_so_aparece_com_veredito(self):
+        antes = self.client.get(reverse("resultado_estudo", args=[self.estudo.pk]))
+        self.assertNotContains(antes, reverse("relatorio_estudo", args=[self.estudo.pk]))
+
+        self.calcular()
+
+        depois = self.client.get(reverse("resultado_estudo", args=[self.estudo.pk]))
+        self.assertContains(depois, reverse("relatorio_estudo", args=[self.estudo.pk]))
+
+    def test_laboratorio_alheio_nao_imprime(self):
+        self.calcular()
+        outro = montar_laboratorio("Lab B", "22.222.222/0001-22")
+        intruso = Usuario.objects.create_user(
+            username="intruso", password="senha-longa-de-teste", laboratorio=outro
+        )
+        self.client.force_login(intruso)
+
+        self.assertEqual(self.client.get(self.url).status_code, 404)
+
+    def test_o_retrato_guarda_o_lote_do_reagente_que_mediu(self):
+        # O objeto do banco não cabe em JSON, e guardá-lo por referência não
+        # serviria: o retrato precisa dizer qual lote mediu mesmo que o cadastro
+        # mude depois. Foi por aqui que um Reagente vazou para dentro do
+        # snapshot e derrubou a ação de calcular — o fixture de teste não tinha
+        # reagente nenhum, então o caminho nunca era percorrido.
+        self.calcular()
+
+        reagentes = self.estudo.veredito.detalhamento["reagentes"]
+        self.assertEqual(reagentes["teste"]["lote"], "R1")
+        self.assertEqual(reagentes["teste"]["intervalo_analitico"], "0,1 a 12")
+
+    def test_o_retrato_inteiro_e_serializavel(self):
+        import json
+
+        self.calcular()
+
+        json.dumps(self.estudo.veredito.detalhamento)  # não pode levantar
+
+    def test_o_relatorio_cita_o_intervalo_analitico_do_kit(self):
+        self.calcular()
+
+        resposta = self.client.get(self.url)
+
+        self.assertContains(resposta, "Intervalo analítico (teste)")
+        self.assertContains(resposta, "lote R1")
+
+
+def pytest_aprox(valor, casas=6):
+    """Compara ponto flutuante sem arrastar o pytest para os testes do Django."""
+    class Aproximado:
+        def __eq__(self, outro):
+            return round(outro - valor, casas) == 0
+
+        def __repr__(self):
+            return f"~{valor}"
+
+    return Aproximado()
+
+
+class TestRazaoDasMediasConclui(TestCase):
+    """A comparação com o bias máximo precisa terminar numa palavra.
+
+    Imprimir "6,68%" ao lado de "[Bias máximo 6,00%]" e deixar o leitor
+    concluir sozinho é pior do que não mostrar — ainda mais quando o veredito
+    final, que vem de outra medida, diz APROVADO logo abaixo.
+    """
+
+    def setUp(self):
+        self.laboratorio = montar_laboratorio("Lab A", "11.111.111/0001-11")
+        self.usuario = Usuario.objects.create_user(
+            username="analista", password="senha-longa-de-teste", laboratorio=self.laboratorio
+        )
+        self.estudo = montar_estudo(self.laboratorio, self.usuario)
+        self.client.force_login(self.usuario)
+
+    def apertar_o_bias(self, valor: str):
+        ficha = self.estudo.especificacao
+        ficha.bias_derivado = False
+        ficha.bias_maximo_pct = Decimal(valor)
+        ficha.save()
+
+    def test_a_razao_dentro_do_limite_e_marcada_como_aprovada(self):
+        # O fixture tem o método novo lendo 2% acima, contra um limite de 6%.
+        resultado = servicos.calcular(self.estudo)["comparabilidade"]
+
+        self.assertEqual(resultado["razao_das_medias"]["desvio_pct"], pytest_aprox(2.0))
+        self.assertEqual(resultado["razao_avaliacao"]["status"], "APROVADO")
+
+    def test_a_razao_acima_do_limite_e_marcada_como_reprovada(self):
+        self.apertar_o_bias("1.00")
+
+        resultado = servicos.calcular(self.estudo)["comparabilidade"]
+
+        self.assertGreater(abs(resultado["razao_das_medias"]["desvio_pct"]), resultado["bias_maximo_pct"])
+        self.assertEqual(resultado["razao_avaliacao"]["status"], "REPROVADO")
+
+    def test_sem_limite_na_ficha_a_comparacao_fica_indeterminada(self):
+        ficha = self.estudo.especificacao
+        ficha.bias_derivado = False
+        ficha.bias_maximo_pct = None
+        ficha.save()
+
+        resultado = servicos.calcular(self.estudo)["comparabilidade"]
+
+        self.assertEqual(resultado["razao_avaliacao"]["status"], "INDETERMINADO")
+
+    def test_a_conclusao_aparece_na_tela(self):
+        self.apertar_o_bias("1.00")
+
+        resposta = self.client.get(reverse("resultado_estudo", args=[self.estudo.pk]))
+
+        self.assertContains(resposta, "Razão das médias")
+        self.assertContains(resposta, "estado--REPROVADO")

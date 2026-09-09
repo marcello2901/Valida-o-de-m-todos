@@ -42,8 +42,13 @@
 
 {% block corpo %}
 <div class="barra">
-  <a href="{% url 'resultado_estudo' estudo.pk %}" class="botao" style="width: 34px; padding: 0; justify-content: center" title="Voltar ao resultado">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 6l-6 6 6 6"/></svg>
+  {% comment %}
+    Uma seta sem rótulo não é caminho de volta: o usuário chegou aqui pelo card
+    do quadro e não encontrava a tela de resultado. O botão diz para onde vai.
+  {% endcomment %}
+  <a href="{% url 'resultado_estudo' estudo.pk %}" class="botao" title="Ver o resultado desta validação">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 6l-6 6 6 6"/></svg>
+    Ver resultado
   </a>
   <div>
     <h1 class="display">Lançar amostras pareadas</h1>

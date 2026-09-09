@@ -45,26 +45,45 @@ class TestLin:
         assert conc.lin([], [])["ccc"] is None
 
 
-class TestErroSistematicoMedio:
-    def test_erro_absoluto_e_percentual(self):
-        # Diferenças: +2 em todas as amostras.
-        resultado = conc.erro_sistematico_medio([10, 20, 30, 40], [12, 22, 32, 42])
+class TestRazaoDasMedias:
+    """A razão entre as médias é o número que se compara com o bias máximo."""
 
-        assert resultado["erro_medio"] == pytest.approx(2.0)
-        assert resultado["erro_medio_pct_ponderado"] == pytest.approx(2 / 25 * 100)
+    def test_a_razao_e_o_desvio_dizem_a_mesma_coisa_de_dois_jeitos(self):
+        # Médias 25 e 27: razão 1,08, ou seja, o método novo lê 8% acima.
+        resultado = conc.razao_das_medias([10, 20, 30, 40], [12, 22, 32, 42])
 
-    def test_as_duas_formas_de_media_divergem(self):
+        assert resultado["media_comparacao"] == pytest.approx(25.0)
+        assert resultado["media_teste"] == pytest.approx(27.0)
+        assert resultado["razao"] == pytest.approx(1.08)
+        assert resultado["desvio_pct"] == pytest.approx(8.0)
+
+    def test_e_o_desvio_que_se_compara_com_o_limite(self):
+        # A razão bruta ao lado de um limite de 6% não quer dizer nada: 1,08 não
+        # é maior nem menor que 6. É o desvio percentual que decide.
+        resultado = conc.razao_das_medias([10, 20, 30, 40], [12, 22, 32, 42])
+
+        assert resultado["desvio_pct"] > 6.0
+
+    def test_metodo_que_le_abaixo_da_desvio_negativo(self):
+        resultado = conc.razao_das_medias([100, 200], [95, 190])
+
+        assert resultado["razao"] == pytest.approx(0.95)
+        assert resultado["desvio_pct"] == pytest.approx(-5.0)
+
+    def test_a_leitura_alternativa_continua_disponivel(self):
         # Um desvio fixo de 1 unidade pesa 10% na amostra de concentração 10 e
         # 1% na de concentração 100. A média das porcentagens enxerga isso; a
-        # razão das médias dilui no valor alto.
-        resultado = conc.erro_sistematico_medio([10, 100], [11, 101])
+        # razão das médias dilui no valor alto. A divergência entre as duas é
+        # informação: quando é grande, o erro depende da concentração.
+        resultado = conc.razao_das_medias([10, 100], [11, 101])
 
-        assert resultado["erro_medio_pct"] == pytest.approx((10 + 1) / 2)
-        assert resultado["erro_medio_pct_ponderado"] == pytest.approx(1 / 55 * 100)
-        assert resultado["erro_medio_pct"] > resultado["erro_medio_pct_ponderado"]
+        assert resultado["media_das_diferencas_pct"] == pytest.approx((10 + 1) / 2)
+        assert resultado["desvio_pct"] == pytest.approx(1 / 55 * 100)
+        assert resultado["media_das_diferencas_pct"] > resultado["desvio_pct"]
 
     def test_sem_dados(self):
-        assert conc.erro_sistematico_medio([], [])["erro_medio"] is None
+        assert conc.razao_das_medias([], [])["razao"] is None
+        assert conc.razao_das_medias([], [])["desvio_pct"] is None
 
 
 class TestConcordanciaAnalitica:
@@ -96,16 +115,18 @@ class TestConcordanciaAnalitica:
         assert resultado["discordantes"][0]["identificacao"] == "AM-002"
         assert resultado["discordantes"][0]["erro_pct"] == pytest.approx(30.0)
 
-    def test_media_boa_pode_esconder_amostras_fora(self):
-        # Erro sistemático médio zero e ainda assim metade das amostras fora do
-        # limite — é justamente o que a média não mostra.
+    def test_razao_perfeita_pode_esconder_amostras_fora(self):
+        # Razão das médias exatamente 1,00 — desvio zero — e ainda assim metade
+        # das amostras fora do limite. Os erros se cancelam na média; é por isso
+        # que a razão sozinha não basta, e a concordância analítica existe.
         comparacao = [100, 100, 100, 100]
         teste = [130, 70, 100, 100]
 
-        media = conc.erro_sistematico_medio(comparacao, teste)
+        media = conc.razao_das_medias(comparacao, teste)
         analitica = conc.concordancia_analitica(comparacao, teste, self.limite_12_pct())
 
-        assert media["erro_medio"] == pytest.approx(0.0)
+        assert media["razao"] == pytest.approx(1.0)
+        assert media["desvio_pct"] == pytest.approx(0.0)
         assert analitica["concordancia_pct"] == pytest.approx(50.0)
 
     def test_limite_absoluto_vale_em_concentracao_baixa(self):

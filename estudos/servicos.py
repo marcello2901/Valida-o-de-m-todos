@@ -43,7 +43,10 @@ def montar_especificacao(especificacao) -> espec.EspecificacaoQualidade:
 
 def _pares_de_comparacao(estudo):
     """Amostras pareadas não excluídas, na ordem de cadastro."""
-    amostras = estudo.amostras_comparacao.filter(excluida=False).order_by("identificacao")
+    # Ordem de cadastro, não alfabética: é a ordem em que a grade mostra e em
+    # que o laboratório digitou. Com códigos repetidos a ordem alfabética é
+    # indefinida entre iguais, e as linhas trocavam de lugar entre telas.
+    amostras = estudo.amostras_comparacao.filter(excluida=False).order_by("pk")
     return (
         [float(a.valor_comparacao) for a in amostras],
         [float(a.valor_teste) for a in amostras],
@@ -71,13 +74,23 @@ def calcular_comparabilidade(estudo, especificacao) -> dict:
         "valores_comparacao": x,
         "valores_teste": y,
         "deming": deming,
-        "passing_bablok": comp.passing_bablok(x, y),
         "regressao": comp.regressao_linear(x, y),
         "bland_altman": comp.bland_altman(x, y),
         "lin": conc.lin(x, y),
-        "erro_sistematico": conc.erro_sistematico_medio(x, y),
+        "razao_das_medias": conc.razao_das_medias(x, y),
         "analitica": conc.concordancia_analitica(x, y, especificacao.erro_total, nomes),
     }
+
+    # A razão das médias só significa alguma coisa ao lado do limite com que
+    # ela se compara — e a comparação precisa concluir. Um percentual acima do
+    # limite impresso sem dizer "reprovado" ao lado deixa o leitor concluir
+    # sozinho, e num registro de qualidade isso é pior do que não mostrar.
+    limite_bias = especificacao.bias.aplicar(None) if especificacao.bias else None
+    resultado["bias_maximo_pct"] = limite_bias["limite_pct"] if limite_bias else None
+    resultado["bias_referencia"] = especificacao.bias.referencia_pct if especificacao.bias else ""
+    resultado["razao_avaliacao"] = ver.avaliar_bias(
+        resultado["razao_das_medias"]["desvio_pct"], especificacao.bias, None
+    )
 
     comparacao_inferior, comparacao_superior = estudo.intervalo_de_comparacao()
     teste_inferior, teste_superior = estudo.intervalo_de_teste()
@@ -211,6 +224,7 @@ def calcular(estudo) -> dict:
         "precisao": precisao_por_nivel,
         "comparabilidade": comparabilidade,
         "veredito": veredito,
+        "reagentes": reagentes_do_estudo(estudo),
         "graficos": _graficos(estudo, precisao_por_nivel, comparabilidade),
         "avisos": _avisos(estudo, precisao_por_nivel, comparabilidade),
     }
@@ -262,6 +276,27 @@ def _bias_do_nivel(item, inclinacao, intercepto):
     return do_alvo, BIAS_AUSENTE
 
 
+def reagentes_do_estudo(estudo) -> dict:
+    """O reagente de cada sistema para o analito deste estudo.
+
+    O intervalo analítico saiu do equipamento e foi para o kit, que é de quem
+    ele sempre foi: um analisador roda dezenas de ensaios, cada um com a sua
+    faixa de medição na bula. É por isso que o relatório precisa dizer qual lote
+    de reagente mediu, e não apenas em qual máquina.
+    """
+    from catalogo.models import Reagente
+
+    def primeiro(sistema):
+        if sistema is None:
+            return None
+        return Reagente.do_estudo(sistema, estudo.mensurando).order_by("-validade").first()
+
+    return {
+        "teste": primeiro(estudo.sistema_teste),
+        "comparacao": primeiro(estudo.sistema_comparacao),
+    }
+
+
 def retrato(estudo) -> dict:
     """Versão do cálculo que pode ser congelada em JSON dentro do veredito.
 
@@ -280,14 +315,34 @@ def retrato(estudo) -> dict:
     congelado = {
         chave: valor
         for chave, valor in resultado.items()
-        if chave not in ("estudo", "graficos", "especificacao", "precisao")
+        if chave not in ("estudo", "graficos", "especificacao", "precisao", "reagentes")
     }
     congelado["estudo"] = estudo.identificacao
     congelado["especificacao"] = _especificacao_legivel(especificacao)
+    congelado["reagentes"] = _reagentes_legiveis(resultado.get("reagentes") or {})
     congelado["precisao"] = [
         {**bloco, "nivel": str(bloco["nivel"])} for bloco in resultado.get("precisao", [])
     ]
     return congelado
+
+
+def _reagentes_legiveis(reagentes: dict) -> dict:
+    """Lote e faixa de medição de cada kit, em texto.
+
+    O objeto do banco não cabe em JSON, e guardá-lo por referência não serviria:
+    o retrato precisa dizer qual lote mediu, mesmo que o cadastro mude depois.
+    """
+    def descrever(reagente):
+        if reagente is None:
+            return None
+        return {
+            "nome": reagente.nome,
+            "lote": reagente.lote,
+            "validade": reagente.validade.isoformat(),
+            "intervalo_analitico": reagente.intervalo_escrito(),
+        }
+
+    return {papel: descrever(reagente) for papel, reagente in reagentes.items()}
 
 
 def _especificacao_legivel(especificacao) -> dict:
@@ -366,9 +421,9 @@ def _graficos(estudo, precisao_por_nivel, comparabilidade) -> dict:
         bland = comparabilidade["bland_altman"]
 
         # A reta desenhada é a de mínimos quadrados, com a de identidade ao
-        # lado: é a comparação que o olho faz. Deming e Passing-Bablok ficam na
-        # tabela — mais adequadas por admitirem erro nos dois eixos, e por isso
-        # é contra elas que o bias por nível é estimado, não contra esta.
+        # lado: é a comparação que o olho faz. A regressão de Deming fica na
+        # tabela — mais adequada por admitir erro nos dois eixos, e por isso é
+        # contra ela que o bias por nível é estimado, não contra esta.
         regressao = comparabilidade["regressao"]
         saida["regressao"] = graf.grafico_regressao(
             x, y, regressao["inclinacao"], regressao["intercepto"], fora, nomes, unidade,
@@ -501,6 +556,12 @@ def concluir(estudo, usuario):
     resultado = retrato(estudo)
     anterior = getattr(estudo, "veredito", None)
 
+    # A conclusão do responsável atravessa o recálculo. Recalcular substitui o
+    # retrato dos números; a leitura que alguém escreveu sobre o estudo não é um
+    # número, e perdê-la por causa de uma réplica corrigida seria absurdo.
+    analise = anterior.analise_critica if anterior else ""
+    analise_em = anterior.analise_atualizada_em if anterior else None
+
     with transaction.atomic():
         if anterior is not None:
             anterior.delete()
@@ -508,6 +569,8 @@ def concluir(estudo, usuario):
             estudo=estudo,
             resultado=resultado["veredito"]["status"],
             detalhamento=resultado,
+            analise_critica=analise,
+            analise_atualizada_em=analise_em,
         )
         estudo.situacao = estudo.CONCLUIDO
         estudo.data_conclusao = timezone.localdate()
@@ -529,6 +592,45 @@ def concluir(estudo, usuario):
         )
 
     return veredito
+
+
+def registrar_analise_critica(estudo, usuario, texto: str) -> str:
+    """Grava a conclusão do responsável e deixa a edição na trilha.
+
+    Continua editável depois do congelamento, e mesmo depois da liberação: os
+    números do veredito são o retrato e não mudam; a leitura que o responsável
+    faz deles amadurece. O que não pode é a mudança acontecer sem registro, e é
+    por isso que cada edição guarda quem, quando e o tamanho do texto anterior.
+    """
+    veredito = getattr(estudo, "veredito", None)
+    if veredito is None:
+        raise AcaoRecusada(
+            "A análise crítica acompanha um cálculo congelado. Calcule o estudo primeiro."
+        )
+
+    texto = (texto or "").strip()
+    anterior = veredito.analise_critica
+    if texto == anterior:
+        return "sem_mudanca"
+
+    with transaction.atomic():
+        veredito.analise_critica = texto
+        veredito.analise_atualizada_em = timezone.now()
+        veredito.save(update_fields=["analise_critica", "analise_atualizada_em"])
+
+        RegistroAuditoria.objects.create(
+            laboratorio=estudo.laboratorio,
+            usuario=usuario if usuario.is_authenticated else None,
+            acao="editou a análise crítica" if anterior else "escreveu a análise crítica",
+            objeto=estudo.identificacao,
+            detalhe={
+                "caracteres_antes": len(anterior),
+                "caracteres_depois": len(texto),
+                "apos_liberacao": veredito.liberado_em is not None,
+            },
+        )
+
+    return "editada" if anterior else "escrita"
 
 
 def liberar(estudo, usuario):
@@ -638,6 +740,10 @@ def salvar_grade(estudo, dados) -> dict:
     detalhe: um envio parcial — formulário truncado, requisição malformada —
     não pode significar "apague tudo o que não veio". Só a posição que chegou no
     envio é considerada.
+
+    Uma réplica ilegível não derruba as outras: as válidas entram e a lista de
+    erros diz quais ficaram de fora. Descartar as 74 réplicas boas por causa da
+    75ª é perder o trabalho de cinco dias por um dígito.
     """
     from .models import Replica
 
@@ -688,9 +794,6 @@ def salvar_grade(estudo, dados) -> dict:
                         nivel=nivel, corrida=corrida, sequencia=sequencia, valor=valor
                     )
                     gravadas += 1
-
-        if erros:
-            transaction.set_rollback(True)
 
     return {"gravadas": gravadas, "apagadas": apagadas, "erros": erros}
 
@@ -757,7 +860,7 @@ def montar_grade_amostras(estudo, linhas_pedidas: int = 0) -> dict:
     do que já foi digitado — apagar dado por causa de um número na barra de
     endereço seria inaceitável.
     """
-    existentes = list(estudo.amostras_comparacao.order_by("identificacao"))
+    existentes = list(estudo.amostras_comparacao.order_by("pk"))
     total = max(comp.MINIMO_AMOSTRAS_EP09, len(existentes), linhas_pedidas)
 
     linhas = []
@@ -849,17 +952,22 @@ def salvar_grade_amostras(estudo, dados, total: int) -> dict:
       com uma amostra que não conta e ninguém sabe por quê.
     - Identificação em branco recebe a sugerida (AM-007). Ninguém deveria ter de
       digitar quarenta identificadores sequenciais à mão.
-    - Identificação repetida é recusada antes de o banco reclamar, com a
-      mensagem dizendo quais linhas colidem.
+    - Identificação repetida é aceita. Acontece na rotina — a mesma amostra
+      corrida duas vezes, um código reaproveitado — e obrigar o laboratório a
+      inventar um identificador falso seria pior para a rastreabilidade.
+
+    Linha com problema não derruba as outras. As válidas são gravadas e as
+    demais voltam descritas, uma a uma, para correção. A regra anterior era
+    tudo-ou-nada: um dígito errado na linha 7 descartava as 40 linhas coladas, e
+    como a página recarregava do banco, o que estava digitado sumia junto.
     """
     from .models import AmostraComparacao
 
     erros: list[str] = []
     a_gravar: list[dict] = []
     a_apagar: list = []
-    vistos: dict[str, int] = {}
 
-    existentes = list(estudo.amostras_comparacao.order_by("identificacao"))
+    existentes = list(estudo.amostras_comparacao.order_by("pk"))
 
     for posicao in range(1, total + 1):
         amostra = existentes[posicao - 1] if posicao <= len(existentes) else None
@@ -897,13 +1005,6 @@ def salvar_grade_amostras(estudo, dados, total: int) -> dict:
             continue
 
         identificacao = identificacao or _identificacao_sugerida(posicao)
-        if identificacao in vistos:
-            erros.append(
-                f"Linha {posicao}: identificação “{identificacao}” repete a da "
-                f"linha {vistos[identificacao]}."
-            )
-            continue
-        vistos[identificacao] = posicao
 
         a_gravar.append(
             {
@@ -913,9 +1014,6 @@ def salvar_grade_amostras(estudo, dados, total: int) -> dict:
                 "teste": valor_teste,
             }
         )
-
-    if erros:
-        return {"gravadas": 0, "apagadas": 0, "erros": erros}
 
     gravadas = 0
     with transaction.atomic():
@@ -948,4 +1046,4 @@ def salvar_grade_amostras(estudo, dados, total: int) -> dict:
                 )
                 gravadas += 1
 
-    return {"gravadas": gravadas, "apagadas": len(a_apagar), "erros": []}
+    return {"gravadas": gravadas, "apagadas": len(a_apagar), "erros": erros}
