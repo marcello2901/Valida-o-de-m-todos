@@ -202,6 +202,10 @@ def calcular(estudo) -> dict:
                 "concentracao": item["concentracao"],
                 "cv_pct": item["estatistica"]["cv_aplicavel"],
                 "bias_pct": bias["relativo_pct"] if bias["avaliavel"] else None,
+                # Qual estudo produziu este bias. É o que decide se o módulo
+                # contratado pode avaliá-lo: o bias contra o grupo de pares sai
+                # da precisão, o bias da reta sai da comparabilidade.
+                "origem_do_bias": origem,
             }
         )
 

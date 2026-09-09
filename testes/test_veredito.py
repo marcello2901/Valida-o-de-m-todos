@@ -105,9 +105,88 @@ class TestModulosContratados:
         )
 
         indicadores = [i["indicador"] for i in resultado["niveis"][0]["indicadores"]]
-        assert indicadores == ["imprecisão"]
+        # Imprecisão e exatidão saem os dois do estudo de precisão. O erro total
+        # é que fica de fora: ele é do pacote completo.
+        assert indicadores == ["imprecisão", "bias"]
         assert "erro total" in resultado["niveis"][0]["nao_contratados"]
         assert resultado["niveis"][0]["sigma"] is None
+
+    def test_precisao_isolada_avalia_o_bias_contra_o_grupo_de_pares(self):
+        # A média das réplicas contra a média do mesmo lote no grupo de pares
+        # sai inteira do estudo de precisão: são as réplicas do laboratório e um
+        # número do boletim do programa. Não depende de amostra pareada nenhuma,
+        # e por isso não pode exigir o módulo de comparabilidade.
+        resultado = ver.avaliar_estudo(
+            modulo=ver.MODULO_PRECISAO,
+            especificacao=especificacao_completa(),
+            niveis=[
+                {
+                    "nivel": 1,
+                    "concentracao": 1.0,
+                    "cv_pct": 2.0,
+                    "bias_pct": 9.0,
+                    "origem_do_bias": "interlaboratorial",
+                }
+            ],
+        )
+
+        bias = [
+            i for i in resultado["niveis"][0]["indicadores"] if i["indicador"] == "bias"
+        ][0]
+        assert bias["limite_pct"] is not None
+        assert bias["status"] == ver.REPROVADO
+        assert "bias" not in resultado["niveis"][0]["nao_contratados"]
+
+    def test_precisao_isolada_nao_avalia_o_bias_da_reta(self):
+        # Esse vem das amostras pareadas, que são do outro módulo.
+        resultado = ver.avaliar_estudo(
+            modulo=ver.MODULO_PRECISAO,
+            especificacao=especificacao_completa(),
+            niveis=[
+                {
+                    "nivel": 1,
+                    "concentracao": 1.0,
+                    "cv_pct": 2.0,
+                    "bias_pct": 9.0,
+                    "origem_do_bias": "regressao",
+                }
+            ],
+        )
+
+        indicadores = [i["indicador"] for i in resultado["niveis"][0]["indicadores"]]
+        assert indicadores == ["imprecisão"]
+        assert "bias" in resultado["niveis"][0]["nao_contratados"]
+
+    def test_comparabilidade_isolada_nao_avalia_o_bias_do_grupo_de_pares(self):
+        # Simétrico: quem comprou só comparabilidade não comprou a precisão.
+        resultado = ver.avaliar_estudo(
+            modulo=ver.MODULO_COMPARABILIDADE,
+            especificacao=especificacao_completa(),
+            niveis=[
+                {
+                    "nivel": 1,
+                    "concentracao": 1.0,
+                    "cv_pct": 2.0,
+                    "bias_pct": 9.0,
+                    "origem_do_bias": "interlaboratorial",
+                }
+            ],
+        )
+
+        assert resultado["niveis"][0]["indicadores"] == []
+        assert "bias" in resultado["niveis"][0]["nao_contratados"]
+
+    def test_sem_origem_declarada_vale_a_regra_antiga(self):
+        # Chamada sem a origem — de código antigo ou de um retrato gravado antes
+        # da separação — continua avaliando o bias se o módulo avalia algum.
+        resultado = ver.avaliar_estudo(
+            modulo=ver.MODULO_COMPARABILIDADE,
+            especificacao=especificacao_completa(),
+            niveis=[{"nivel": 1, "concentracao": 1.0, "cv_pct": 2.0, "bias_pct": 1.0}],
+        )
+
+        indicadores = [i["indicador"] for i in resultado["niveis"][0]["indicadores"]]
+        assert indicadores == ["bias"]
 
     def test_comparabilidade_isolada_avalia_apenas_bias(self):
         resultado = ver.avaliar_estudo(

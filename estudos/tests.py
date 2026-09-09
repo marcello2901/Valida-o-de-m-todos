@@ -1711,3 +1711,79 @@ class TestOrientacaoParaSalvarEmPDF(TestCase):
         resposta = self.client.get(self.url)
 
         self.assertContains(resposta, ".comandos, .recados, .como-salvar { display: none !important; }")
+
+
+class TestExatidaoNoModuloDePrecisao(TestCase):
+    """A exatidão contra o grupo de pares pertence ao estudo de precisão.
+
+    O laboratório lança as réplicas, digita a média do mesmo lote no boletim do
+    programa interlaboratorial e o bias sai daí — sem amostra pareada nenhuma.
+    O motor exigia o módulo de comparabilidade para avaliá-lo, então quem
+    contratou só precisão via o percentual calculado na tela e, na coluna do
+    limite, "sem limite definido": o número aparecia sem veredito, que é a pior
+    forma de mostrá-lo num relatório de validação.
+    """
+
+    def setUp(self):
+        self.laboratorio = montar_laboratorio("Lab P", "22.222.222/0001-22")
+        self.laboratorio.assinaturas.all().delete()
+        Assinatura.objects.create(
+            laboratorio=self.laboratorio, modulo=Assinatura.PRECISAO
+        )
+        self.usuario = Usuario.objects.create_user(
+            username="analista", password="senha-longa-de-teste",
+            laboratorio=self.laboratorio, funcao=Usuario.RESPONSAVEL,
+        )
+        self.estudo = montar_estudo(self.laboratorio, self.usuario)
+        self.estudo.modulo = Assinatura.PRECISAO
+        self.estudo.save()
+
+        self.nivel = self.estudo.niveis.get(numero=1)
+        self.nivel.media_interlaboratorial = Decimal("1.2000")
+        self.nivel.provedor_interlaboratorial = "Controllab EQ"
+        self.nivel.save()
+
+        self.client.force_login(self.usuario)
+
+    def test_o_bias_maximo_da_ficha_e_o_limite_da_exatidao(self):
+        contexto = servicos.calcular(self.estudo)
+        item = contexto["precisao"][0]
+
+        self.assertEqual(item["origem_do_bias"], servicos.BIAS_INTERLABORATORIAL)
+        self.assertIsNotNone(item["indicador_bias"])
+        self.assertEqual(
+            Decimal(str(item["indicador_bias"]["limite_pct"])),
+            self.estudo.especificacao.bias_maximo_pct,
+        )
+
+    def test_a_tela_mostra_o_limite_e_a_situacao(self):
+        resposta = self.client.get(
+            reverse("resultado_estudo", args=[self.estudo.pk])
+        )
+
+        corpo = resposta.content.decode()
+        self.assertNotIn("sem limite", corpo)
+        self.assertIn("bias máximo", corpo)
+        # Réplicas em torno de 1,315 contra pares em 1,200: passa dos 6%.
+        self.assertIn("estado--REPROVADO", corpo)
+
+    def test_o_relatorio_mostra_o_limite_e_a_situacao(self):
+        self.client.post(reverse("concluir_estudo", args=[self.estudo.pk]))
+
+        resposta = self.client.get(
+            reverse("relatorio_estudo", args=[self.estudo.pk])
+        )
+
+        corpo = resposta.content.decode()
+        self.assertNotIn("sem limite definido", corpo)
+        self.assertIn("bias máximo", corpo)
+
+    def test_o_erro_total_continua_sendo_do_pacote_completo(self):
+        # A exatidão entrou; o erro total não. São coisas diferentes, e essa é
+        # uma decisão comercial, não analítica.
+        contexto = servicos.calcular(self.estudo)
+        item = contexto["precisao"][0]
+
+        indicadores = [i["indicador"] for i in item["avaliacao"]["indicadores"]]
+        self.assertIn("bias", indicadores)
+        self.assertNotIn("erro total", indicadores)
