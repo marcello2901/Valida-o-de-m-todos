@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load numeros %}
 
 {% comment %}
   Relatório de validação, feito para sair em papel.
@@ -75,13 +76,25 @@
     font-size: 10.5px; color: var(--tinta-3); line-height: 1.55;
   }
 
+  /* A instrução de como salvar. Some na impressão junto com os comandos: ela
+     existe para a tela, e no papel seria ruído dentro do documento. */
+  .como-salvar {
+    max-width: 820px; margin: 0 auto 14px; padding: 11px 14px;
+    background: var(--acento-fundo); border: 1px solid var(--acento-linha);
+    border-radius: var(--raio-menor); font-size: 12px; line-height: 1.6; color: var(--tinta-2);
+  }
+  .como-salvar code, .como-salvar kbd {
+    background: var(--superficie); border: 1px solid var(--linha); border-radius: 4px;
+    padding: 0 4px; font-size: 11px;
+  }
+
   .grafico { margin: 10px 0; break-inside: avoid; }
   .grafico svg { max-width: 100%; height: auto; }
 
   @media print {
     @page { size: A4; margin: 14mm 12mm 16mm; }
     body { background: #fff; }
-    .comandos, .recados { display: none !important; }
+    .comandos, .recados, .como-salvar { display: none !important; }
     .folha { max-width: none; margin: 0; padding: 0; box-shadow: none; }
     .bloco { break-inside: avoid; }
     a { color: inherit; text-decoration: none; }
@@ -96,11 +109,27 @@
     Voltar ao estudo
   </a>
   <div class="cresce"></div>
+  {% comment %}
+    O botão abre a caixa de impressão do navegador — não baixa arquivo nenhum.
+    Chamá-lo de "Gerar PDF" prometia um download e entregava um diálogo, e quem
+    aceitava o destino que já estava selecionado saía com um .xps ou .oxps que o
+    Windows não abre mais. O rótulo agora diz o que a ação faz, e a instrução
+    nomeia o destino a escolher em vez de só pedir para escolher um.
+  {% endcomment %}
   <button type="button" class="botao botao--primario" onclick="window.print()">
     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V3h12v6"/><rect x="3" y="9" width="18" height="8" rx="2"/><path d="M7 17h10v4H7z"/></svg>
-    Gerar PDF
+    Salvar em PDF
   </button>
-  <span class="nota">Escolha “Salvar como PDF” no destino da impressão.</span>
+</div>
+
+<div class="como-salvar">
+  <strong>Para gerar o arquivo:</strong> clique em <em>Salvar em PDF</em> e, na caixa que
+  abrir, confira o campo <strong>Destino</strong> (ou <em>Impressora</em>). Ele precisa estar em
+  <strong>“Salvar como PDF”</strong> — no Windows também serve <strong>“Microsoft Print to PDF”</strong>.
+  <br>
+  Se estiver em <em>Microsoft XPS Document Writer</em>, troque: esse destino gera um arquivo
+  <code>.xps</code> que o Windows não abre mais. E não use <kbd>Ctrl</kbd>+<kbd>S</kbd> —
+  isso salva a página, não o documento.
 </div>
 
 <div class="folha">
@@ -232,28 +261,68 @@
       </tr>
     </table>
     <table>
-      <tr><th>Avaliação</th><th class="n">Obtido</th><th class="n">Comparado com</th><th class="n">Limite</th><th>Situação</th></tr>
-      {% for indicador in item.avaliacao.indicadores %}{% if indicador.indicador == "imprecisão" %}
+      {% comment %}
+        A mesma linha da tela, e pelo mesmo motivo: quem lê o documento impresso
+        não tem calculadora ao lado. O bias com sinal (para que lado o método
+        lê), os dois valores confrontados com o nome de cada um, o teto e a
+        situação. E cada indicador vem nomeado do serviço — varrendo a lista
+        aqui dentro, a linha perdia duas colunas quando o indicador não existia.
+      {% endcomment %}
+      <tr><th>Avaliação</th><th class="n">Obtido</th><th class="n">Comparação</th><th class="n">Limite</th><th>Situação</th></tr>
+      {% if item.indicador_imprecisao %}
       <tr>
         <td>Precisão — {{ item.estatistica.tipo_cv_aplicavel|default:"CV" }}</td>
         <td class="n">{{ item.estatistica.cv|floatformat:2|default:"—" }}%</td>
-        <td class="n">—</td>
-        <td class="n">{{ indicador.limite_pct|floatformat:2|default:"—" }}%</td>
-        <td>{{ indicador.status }}</td>
+        <td class="n">
+          {{ item.estatistica.desvio_padrao|com_menos:4 }} &divide; {{ item.estatistica.media|com_menos:4 }}
+          <div class="nota">desvio padrão &divide; média global</div>
+        </td>
+        <td class="n">&plusmn; {{ item.indicador_imprecisao.limite_pct|floatformat:2|default:"—" }}%</td>
+        <td>{{ item.indicador_imprecisao.status }}</td>
       </tr>
-      {% endif %}{% endfor %}
+      {% endif %}
       {% if item.bias.avaliavel %}
       <tr>
         <td>
-          Exatidão — média das réplicas vs. interlaboratorial
-          {% if item.origem_do_alvo %}<div class="nota">{{ item.origem_do_alvo }}</div>{% endif %}
+          {% if item.origem_do_bias == "interlaboratorial" %}
+            Exatidão — bias contra a média interlaboratorial
+            <div class="nota">
+              {{ item.bias.media_obtida|com_menos:4 }} &minus; {{ item.bias.media_alvo|com_menos:4 }}
+              = {{ item.bias.absoluto|com_menos:4 }} {{ estudo.mensurando.unidade_medida }}
+              {% if item.origem_do_alvo %}&middot; {{ item.origem_do_alvo }}{% endif %}
+            </div>
+          {% else %}
+            Exatidão — estimada pela reta de regressão
+            <div class="nota">
+              sem média interlaboratorial neste nível &middot;
+              absoluto {{ item.bias.absoluto|com_menos:4 }}
+            </div>
+          {% endif %}
         </td>
-        <td class="n">{{ item.bias.relativo_pct|floatformat:2 }}%</td>
-        <td class="n">{{ item.bias.media_alvo|floatformat:4 }}</td>
-        {% for indicador in item.avaliacao.indicadores %}{% if indicador.indicador == "bias" %}
-        <td class="n">{{ indicador.limite_pct|floatformat:2|default:"—" }}%</td>
-        <td>{{ indicador.status }}</td>
-        {% endif %}{% endfor %}
+        <td class="n">
+          {{ item.bias.relativo_pct|sinalizado:2 }}%
+          <div class="nota">
+            {% if item.bias.relativo_pct > 0 %}bias positivo — acima
+            {% elif item.bias.relativo_pct < 0 %}bias negativo — abaixo
+            {% else %}sem desvio{% endif %}
+          </div>
+        </td>
+        <td class="n">
+          {{ item.bias.media_obtida|com_menos:4 }} vs. {{ item.bias.media_alvo|com_menos:4 }}
+          <div class="nota">
+            média das réplicas vs.
+            {% if item.origem_do_bias == "interlaboratorial" %}média interlaboratorial{% else %}nível da reta{% endif %}
+          </div>
+        </td>
+        <td class="n">
+          {% if item.indicador_bias.limite_pct %}
+            &plusmn; {{ item.indicador_bias.limite_pct|floatformat:2 }}%
+            <div class="nota">bias máximo</div>
+          {% else %}
+            sem limite definido
+          {% endif %}
+        </td>
+        <td>{{ item.indicador_bias.status|default:"INDETERMINADO" }}</td>
       </tr>
       {% else %}
       <tr><td>Exatidão</td><td colspan="4">Não avaliada — média interlaboratorial não informada.</td></tr>

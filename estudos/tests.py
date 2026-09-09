@@ -1630,6 +1630,25 @@ class TestLinhaDaExatidao(TestCase):
         self.assertContains(resposta, "bias máximo")
         self.assertContains(resposta, "estado--REPROVADO")
 
+    def test_o_relatorio_impresso_diz_o_mesmo_que_a_tela(self):
+        # A tela e o relatório são o mesmo dado lido por gente diferente. Foi
+        # exatamente aqui que a mudança anterior escapou: a linha entrou na tela
+        # e o documento impresso — o que sai do laboratório — ficou para trás.
+        self.nivel.media_interlaboratorial = Decimal("1.2000")
+        self.nivel.provedor_interlaboratorial = "Controllab EQ"
+        self.nivel.save()
+        self.client.post(reverse("concluir_estudo", args=[self.estudo.pk]))
+
+        relatorio = self.client.get(reverse("relatorio_estudo", args=[self.estudo.pk]))
+
+        corpo = relatorio.content.decode()
+        self.assertNotIn("Comparado com", corpo)
+        self.assertIn("Comparação", corpo)
+        self.assertIn("+9,58%", corpo)
+        self.assertIn("bias positivo", corpo)
+        self.assertIn("média das réplicas vs.", corpo)
+        self.assertIn("bias máximo", corpo)
+
     def test_sem_limite_de_bias_a_celula_diz_que_falta_e_nao_some(self):
         # Antes, quando o indicador não existia, a linha perdia duas colunas e
         # a tabela saía torta — o limite simplesmente sumia da tela.
@@ -1647,3 +1666,48 @@ class TestLinhaDaExatidao(TestCase):
 
         self.assertContains(resposta, "sem limite")
         self.assertContains(resposta, "estado--INDETERMINADO")
+
+
+class TestOrientacaoParaSalvarEmPDF(TestCase):
+    """A tela do relatório precisa dizer como o arquivo sai.
+
+    O programa não gera PDF no servidor: o botão abre a caixa de impressão do
+    navegador. Quem aceita o destino que já estava selecionado no Windows pode
+    sair com um .xps, que o sistema não abre mais — e conclui que o relatório
+    está quebrado. A instrução nomeia o destino certo em vez de só pedir para
+    escolher um, e some na impressão, onde seria ruído dentro do documento.
+    """
+
+    def setUp(self):
+        self.laboratorio = montar_laboratorio("Lab A", "11.111.111/0001-11")
+        self.responsavel = Usuario.objects.create_user(
+            username="rt", password="senha-longa-de-teste",
+            laboratorio=self.laboratorio, funcao=Usuario.RESPONSAVEL,
+        )
+        self.estudo = montar_estudo(self.laboratorio, self.responsavel)
+        self.client.force_login(self.responsavel)
+        self.client.post(reverse("concluir_estudo", args=[self.estudo.pk]))
+        self.url = reverse("relatorio_estudo", args=[self.estudo.pk])
+
+    def test_nomeia_o_destino_a_escolher(self):
+        resposta = self.client.get(self.url)
+
+        self.assertContains(resposta, "Salvar como PDF")
+        self.assertContains(resposta, "Microsoft Print to PDF")
+
+    def test_avisa_sobre_o_destino_que_gera_arquivo_que_nao_abre(self):
+        resposta = self.client.get(self.url)
+
+        self.assertContains(resposta, "XPS")
+
+    def test_o_botao_nao_promete_um_download(self):
+        # "Gerar PDF" prometia arquivo e entregava um diálogo.
+        resposta = self.client.get(self.url)
+
+        self.assertContains(resposta, "Salvar em PDF")
+        self.assertNotContains(resposta, "Gerar PDF")
+
+    def test_a_orientacao_nao_entra_no_papel(self):
+        resposta = self.client.get(self.url)
+
+        self.assertContains(resposta, ".comandos, .recados, .como-salvar { display: none !important; }")
