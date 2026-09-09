@@ -392,6 +392,84 @@
   {% endwith %}
   {% endif %}
 
+  {% comment %}
+    Desempenho qualitativo. O relatório saía sem esta seção: um estudo EP12
+    imprimia identificação, especificação e rastreabilidade, e nenhum resultado
+    — o documento que o laboratório arquiva não dizia o que o método fez.
+  {% endcomment %}
+  {% if tipo == "qualitativo" %}
+  <div class="bloco">
+    <h2>Desempenho qualitativo &mdash; concordância com o método de referência</h2>
+    {% if qualitativo.tem_dados %}
+    {% with d=qualitativo.desempenho t=qualitativo.tabela %}
+    <table>
+      <tr>
+        <th>Referência \ Método em teste</th>
+        <th class="n">Reagente</th><th class="n">Não reagente</th><th class="n">Total</th>
+      </tr>
+      <tr>
+        <td>Reagente</td>
+        <td class="n">{{ t.verdadeiros_positivos }}</td>
+        <td class="n">{{ t.falsos_negativos }}</td>
+        <td class="n">{{ t.verdadeiros_positivos|add:t.falsos_negativos }}</td>
+      </tr>
+      <tr>
+        <td>Não reagente</td>
+        <td class="n">{{ t.falsos_positivos }}</td>
+        <td class="n">{{ t.verdadeiros_negativos }}</td>
+        <td class="n">{{ t.verdadeiros_negativos|add:t.falsos_positivos }}</td>
+      </tr>
+      <tr>
+        <td><strong>Total</strong></td>
+        <td class="n" colspan="2"></td>
+        <td class="n"><strong>{{ t.n }}</strong></td>
+      </tr>
+    </table>
+
+    <table style="margin-top: 10px">
+      <tr><th>Indicador</th><th class="n">Valor</th><th class="n">IC 95%</th><th>Leitura</th></tr>
+      <tr>
+        <td>Sensibilidade</td>
+        <td class="n">{{ d.sensibilidade_pct|floatformat:1|default:"—" }}%</td>
+        <td class="n">{% if d.sensibilidade_ic95 %}{{ d.sensibilidade_ic95.0|floatformat:1 }} – {{ d.sensibilidade_ic95.1|floatformat:1 }}%{% else %}—{% endif %}</td>
+        <td>Estimada só com as amostras reagentes na referência</td>
+      </tr>
+      <tr>
+        <td>Especificidade</td>
+        <td class="n">{{ d.especificidade_pct|floatformat:1|default:"—" }}%</td>
+        <td class="n">{% if d.especificidade_ic95 %}{{ d.especificidade_ic95.0|floatformat:1 }} – {{ d.especificidade_ic95.1|floatformat:1 }}%{% else %}—{% endif %}</td>
+        <td>Estimada só com as amostras não reagentes na referência</td>
+      </tr>
+      <tr>
+        <td>Concordância total</td>
+        <td class="n">{{ d.concordancia_pct|floatformat:1|default:"—" }}%</td>
+        <td class="n">{% if d.concordancia_ic95 %}{{ d.concordancia_ic95.0|floatformat:1 }} – {{ d.concordancia_ic95.1|floatformat:1 }}%{% else %}—{% endif %}</td>
+        <td>Proporção de acertos sobre o total</td>
+      </tr>
+      <tr>
+        <td>Kappa de Cohen</td>
+        <td class="n">{{ d.kappa|floatformat:3|default:"—" }}</td>
+        <td class="n">&mdash;</td>
+        <td>{{ d.classificacao_kappa }} &mdash; concordância descontado o acaso</td>
+      </tr>
+    </table>
+
+    <p class="nota" style="margin-top: 8px">
+      Valores preditivos calculados sobre a prevalência desta amostragem
+      ({{ d.prevalencia_amostra_pct|floatformat:1 }}%), que raramente é a da população
+      atendida: VPP {{ d.vpp_pct|floatformat:1|default:"—" }}% &middot;
+      VPN {{ d.vpn_pct|floatformat:1|default:"—" }}%.
+      {% if t.descartados %}
+        {{ t.descartados }} amostra(s) descartada(s) por resultado ausente em um dos métodos.
+      {% endif %}
+    </p>
+    {% endwith %}
+    {% else %}
+    <p>{{ qualitativo.motivo|capfirst }}.</p>
+    {% endif %}
+  </div>
+  {% endif %}
+
   {% if avisos %}
   <div class="bloco">
     <h2>Ressalvas</h2>

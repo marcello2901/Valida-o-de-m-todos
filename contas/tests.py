@@ -157,7 +157,9 @@ class TestConfiguracoes(TestCase):
 
         self.assertContains(resposta, "vence em 10 d")
 
-    def test_analito_sem_intervalo_de_referencia_e_sinalizado(self):
+    def test_o_cartao_do_analito_mostra_quantas_validacoes_o_usam(self):
+        # O intervalo de referência saiu do analito — é da metodologia, e cada
+        # validação declara o seu. O que o cartão tem a dizer aqui é o uso.
         Mensurando.objects.create(
             laboratorio=self.laboratorio, nome="Ferritina",
             unidade_medida="ng/mL", material_biologico="soro",
@@ -165,7 +167,8 @@ class TestConfiguracoes(TestCase):
 
         resposta = self.client.get(self.url)
 
-        self.assertContains(resposta, "concordância clínica não é calculada")
+        self.assertContains(resposta, "0 validações")
+        self.assertNotContains(resposta, "intervalo de referência")
 
     def test_laboratorio_alheio_nao_aparece(self):
         outro = Laboratorio.objects.create(razao_social="Lab B", cnpj="22.222.222/0001-22")

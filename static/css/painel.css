@@ -199,3 +199,27 @@ fieldset.module .description { padding: 10px 14px 0; color: var(--tinta-3); font
 /* O "+" das ferramentas de objeto é imagem de fundo alinhada à direita: sem
  * folga o texto passa por baixo dele. */
 .object-tools a.addlink { padding-right: 30px; background-position: right 11px center; }
+
+/* --- Atalho para as telas de lançamento ------------------------------------
+ *
+ * Fica logo abaixo do inline a que pertence, com o mesmo peso visual de um
+ * bloco do formulário — é uma etapa do cadastro, não um enfeite. O botão é o
+ * do programa, e não o "adicionar" do painel: leva para fora do painel. */
+.atalho-lancamento { margin-top: -8px; }
+.atalho-lancamento .atalho-corpo {
+  padding: 12px 14px 14px;
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+}
+.atalho-lancamento .atalho-explica {
+  margin: 0; flex: 1 1 320px; min-width: 260px;
+  font-size: 12.5px; line-height: 1.55; color: var(--tinta-3);
+}
+.atalho-lancamento .atalho-botao,
+.atalho-lancamento .atalho-botao:link,
+.atalho-lancamento .atalho-botao:visited {
+  display: inline-flex; align-items: center; gap: 7px; flex-shrink: 0;
+  height: 36px; padding: 0 16px; border-radius: 8px;
+  background: var(--acento); border: 1px solid var(--acento); color: #fff;
+  font-size: 13px; font-weight: 600; text-decoration: none;
+}
+.atalho-lancamento .atalho-botao:hover { background: #1f5da8; border-color: #1f5da8; color: #fff; }

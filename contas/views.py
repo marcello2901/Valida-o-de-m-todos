@@ -10,6 +10,7 @@ existe, o que está vencendo e o que falta preencher.
 """
 
 from django.contrib.auth.decorators import login_required
+from django.db.models import Count
 from django.shortcuts import render
 from django.utils import timezone
 
@@ -86,12 +87,17 @@ def configuracoes(request):
         )
 
     analitos = []
-    for mensurando in Mensurando.objects.filter(laboratorio=laboratorio):
+    for mensurando in Mensurando.objects.filter(laboratorio=laboratorio).annotate(
+        total_estudos=Count("estudos")
+    ):
         analitos.append(
             {
                 "mensurando": mensurando,
                 "sigla": mensurando.nome[:3].upper(),
-                "tem_intervalo": mensurando.tem_intervalo_referencia(),
+                # O intervalo de referência saiu do analito: ele é da
+                # metodologia, e cada validação declara o seu. O que o cartão
+                # tem a dizer aqui é quantas validações usam este analito.
+                "estudos": mensurando.total_estudos,
             }
         )
 

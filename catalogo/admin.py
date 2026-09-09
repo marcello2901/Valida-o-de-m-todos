@@ -15,29 +15,35 @@ from .models import (
 
 @admin.register(Mensurando)
 class MensurandoAdmin(admin.ModelAdmin):
-    list_display = ["nome", "unidade_medida", "material_biologico", "intervalo_referencia", "laboratorio"]
+    """O analito: o que se mede, em que unidade, em que material.
+
+    O intervalo de referência saiu daqui: ele é da metodologia, e cada estudo já
+    declara o do método de comparação e o do método em teste. Um valor único no
+    analito servia de reserva para os dois lados — e classificar os resultados
+    dos dois métodos pela mesma faixa esconde exatamente o desacordo que a
+    concordância clínica existe para medir.
+    """
+
+    list_display = ["nome", "unidade_medida", "material_biologico", "validacoes", "laboratorio"]
     list_filter = ["laboratorio", "material_biologico"]
     search_fields = ["nome"]
 
     fieldsets = [
-        ("Identificação", {"fields": ["laboratorio", "nome", "unidade_medida", "material_biologico"]}),
         (
-            "Intervalo de referência",
+            "Identificação",
             {
-                "fields": ["referencia_inferior", "referencia_superior"],
+                "fields": ["laboratorio", "nome", "unidade_medida", "material_biologico"],
                 "description": (
-                    "Necessário para a concordância clínica: é o que permite dizer se os "
-                    "dois métodos classificariam a amostra da mesma forma no laudo."
+                    "O intervalo de referência é informado em cada validação, um para o "
+                    "método de comparação e outro para o método em teste."
                 ),
             },
         ),
     ]
 
-    @admin.display(description="intervalo de referência")
-    def intervalo_referencia(self, obj):
-        if not obj.tem_intervalo_referencia():
-            return "— não informado —"
-        return f"{obj.referencia_inferior} a {obj.referencia_superior} {obj.unidade_medida}"
+    @admin.display(description="validações")
+    def validacoes(self, obj):
+        return obj.estudos.count()
 
 
 class ReagenteInline(admin.TabularInline):

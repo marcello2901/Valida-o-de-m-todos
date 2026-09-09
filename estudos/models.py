@@ -144,11 +144,22 @@ class Estudo(models.Model):
                 {"sistema_comparacao": "O sistema de comparação precisa ser diferente do sistema em teste."}
             )
 
+    # Um estudo qualitativo não tem CV nem viés: o que ele mede é concordância
+    # numa tabela 2×2. Os dois predicados abaixo precisam do tipo, e não só do
+    # módulo contratado — sem isso um estudo qualitativo de módulo completo
+    # esperava 40 amostras pareadas que nunca existiriam, e nunca ficava pronto.
     def avalia_precisao(self) -> bool:
-        return self.modulo in (Assinatura.PRECISAO, Assinatura.COMPLETO)
+        return self.tipo == self.QUANTITATIVO and self.modulo in (
+            Assinatura.PRECISAO, Assinatura.COMPLETO
+        )
 
     def avalia_comparabilidade(self) -> bool:
-        return self.modulo in (Assinatura.COMPARABILIDADE, Assinatura.COMPLETO)
+        return self.tipo == self.QUANTITATIVO and self.modulo in (
+            Assinatura.COMPARABILIDADE, Assinatura.COMPLETO
+        )
+
+    def avalia_qualitativo(self) -> bool:
+        return self.tipo == self.QUALITATIVO
 
     def minimo_replicas_por_nivel(self) -> int:
         """Quantas réplicas o desenho escolhido exige em cada nível de controle."""
@@ -182,10 +193,15 @@ class Estudo(models.Model):
     # ação. Estes métodos são a fonte desses dois números.
 
     def intervalo_de_comparacao(self):
-        """Intervalo do método antigo: o do estudo, ou o do mensurando."""
-        if self.referencia_comparacao_inferior is not None or self.referencia_comparacao_superior is not None:
-            return self.referencia_comparacao_inferior, self.referencia_comparacao_superior
-        return self.mensurando.referencia_inferior, self.mensurando.referencia_superior
+        """Intervalo do método antigo, como ele sai no laudo.
+
+        Não há mais reserva no analito: o intervalo é da metodologia, e um valor
+        único herdado por todos os estudos do mesmo analito classificaria os dois
+        métodos pela mesma faixa — que é justamente o desacordo que a
+        concordância clínica existe para medir. Em branco, a concordância
+        clínica não é avaliada, e o relatório diz isso.
+        """
+        return self.referencia_comparacao_inferior, self.referencia_comparacao_superior
 
     def intervalo_de_teste(self):
         """Intervalo do método novo.
@@ -204,17 +220,36 @@ class Estudo(models.Model):
     def amostras_lancadas(self) -> int:
         return self.amostras_comparacao.filter(excluida=False).count()
 
+    def amostras_qualitativas_lancadas(self) -> int:
+        return self.amostras_qualitativas.count()
+
     def progresso(self) -> dict:
-        """Quanto de cada estudo já foi digitado, em número e em percentual."""
+        """Quanto de cada estudo já foi digitado, em número e em percentual.
+
+        As amostras qualitativas entram nesta conta como as outras duas. Ficaram
+        de fora desde o começo, e a consequência não era cosmética: um estudo
+        qualitativo com trinta amostras lançadas dizia "Sem dados lançados",
+        ficava parado na coluna de rascunho e o cálculo era recusado. O módulo
+        EP12 existia no motor e não tinha como ser usado.
+        """
         from motor.comparabilidade import MINIMO_AMOSTRAS_EP09
+        from motor.qualitativo import MINIMO_AMOSTRAS_EP12
 
         precisao_feita = self.replicas_lancadas() if self.avalia_precisao() else 0
         precisao_total = self.replicas_esperadas() if self.avalia_precisao() else 0
         comparacao_feita = self.amostras_lancadas() if self.avalia_comparabilidade() else 0
         comparacao_total = MINIMO_AMOSTRAS_EP09 if self.avalia_comparabilidade() else 0
+        qualitativo_feita = self.amostras_qualitativas_lancadas() if self.avalia_qualitativo() else 0
+        qualitativo_total = MINIMO_AMOSTRAS_EP12 if self.avalia_qualitativo() else 0
 
         def percentual(feito, total):
             return min(100, round(feito / total * 100)) if total else 0
+
+        pares = (
+            (precisao_feita, precisao_total),
+            (comparacao_feita, comparacao_total),
+            (qualitativo_feita, qualitativo_total),
+        )
 
         return {
             "precisao_feita": precisao_feita,
@@ -223,22 +258,28 @@ class Estudo(models.Model):
             "comparacao_feita": comparacao_feita,
             "comparacao_total": comparacao_total,
             "comparacao_pct": percentual(comparacao_feita, comparacao_total),
+            "qualitativo_feita": qualitativo_feita,
+            "qualitativo_total": qualitativo_total,
+            "qualitativo_pct": percentual(qualitativo_feita, qualitativo_total),
             "precisao_faltam": max(0, precisao_total - precisao_feita),
             "comparacao_faltam": max(0, comparacao_total - comparacao_feita),
+            "qualitativo_faltam": max(0, qualitativo_total - qualitativo_feita),
             "completo": (
-                (not precisao_total or precisao_feita >= precisao_total)
-                and (not comparacao_total or comparacao_feita >= comparacao_total)
-                and (precisao_total or comparacao_total)
+                all(not total or feito >= total for feito, total in pares)
+                and any(total for _, total in pares)
             ),
-            "iniciado": bool(precisao_feita or comparacao_feita),
+            "iniciado": bool(precisao_feita or comparacao_feita or qualitativo_feita),
         }
 
     def tela_da_proxima_acao(self) -> str:
-        """Qual grade abrir ao clicar no card: réplicas ou amostras pareadas.
+        """Qual grade abrir ao clicar no card.
 
         O card do quadro promete uma ação ("Faltam 30 amostras"); mandar o
         usuário para a tela de réplicas depois disso é uma promessa quebrada.
         """
+        if self.avalia_qualitativo():
+            return "qualitativas_estudo"
+
         andamento = self.progresso()
         falta_precisao = andamento["precisao_total"] and not andamento["precisao_feita"] >= andamento["precisao_total"]
         if falta_precisao or not andamento["comparacao_total"]:
@@ -261,10 +302,18 @@ class Estudo(models.Model):
                 return "Decidir o veredito"
             return "Aguarda liberação técnica"
 
+        andamento = self.progresso()
+
+        if self.avalia_qualitativo():
+            if not andamento["qualitativo_feita"]:
+                return "Sem dados lançados"
+            if andamento["qualitativo_faltam"]:
+                return f"Faltam {andamento['qualitativo_faltam']} amostras"
+            return "Calcular agora"
+
         if not self.niveis.exists() and not self.amostras_comparacao.exists():
             return "Sem dados lançados"
 
-        andamento = self.progresso()
         if andamento["completo"]:
             return "Calcular agora"
 
@@ -443,12 +492,12 @@ class AmostraQualitativa(models.Model):
     class Meta:
         verbose_name = "amostra qualitativa"
         verbose_name_plural = "amostras qualitativas"
+        # Sem unicidade da identificação, pelo mesmo motivo da amostra pareada:
+        # código de barras repetido acontece na rotina, e obrigar o laboratório
+        # a inventar um identificador falso é pior para a rastreabilidade do que
+        # o código repetido. Aqui a regra valia e a de lá não — duas grades
+        # irmãs recusando dados diferentes é a pior das duas opções.
         ordering = ["identificacao"]
-        constraints = [
-            models.UniqueConstraint(
-                fields=["estudo", "identificacao"], name="amostra_qualitativa_unica_por_estudo"
-            )
-        ]
 
     def __str__(self):
         marca = lambda v: "reagente" if v else "não reagente"  # noqa: E731

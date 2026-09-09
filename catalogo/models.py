@@ -28,21 +28,15 @@ class Mensurando(models.Model):
     nome = models.CharField("nome", max_length=100, help_text="Ex.: FT4, Glicose, TSH")
     unidade_medida = models.CharField("unidade de medida", max_length=30, help_text="Ex.: ng/dL, mg/dL")
     material_biologico = models.CharField("material biológico", max_length=60, help_text="Ex.: soro, plasma, sangue total")
-    referencia_inferior = models.DecimalField(
-        "intervalo de referência — limite inferior",
-        max_digits=14,
-        decimal_places=4,
-        null=True,
-        blank=True,
-        help_text="Necessário para calcular a concordância clínica entre os métodos.",
-    )
-    referencia_superior = models.DecimalField(
-        "intervalo de referência — limite superior",
-        max_digits=14,
-        decimal_places=4,
-        null=True,
-        blank=True,
-    )
+
+    # O intervalo de referência NÃO mora aqui.
+    #
+    # Ele é da metodologia, não do analito: dois imunoensaios de FT4 imprimem
+    # faixas diferentes no laudo, e é por isso que o estudo declara um intervalo
+    # para o método de comparação e outro para o método em teste. Um valor único
+    # no analito servia de reserva para os dois — o que é justamente o erro que a
+    # concordância clínica existe para detectar, porque classificar as amostras
+    # dos dois métodos pela mesma faixa esconde o desacordo que se quer medir.
 
     class Meta:
         verbose_name = "mensurando"
@@ -58,16 +52,6 @@ class Mensurando(models.Model):
     def __str__(self):
         return f"{self.nome} ({self.unidade_medida}) — {self.material_biologico}"
 
-    def clean(self):
-        inferior, superior = self.referencia_inferior, self.referencia_superior
-        if inferior is not None and superior is not None and inferior >= superior:
-            raise ValidationError(
-                {"referencia_superior": "O limite superior do intervalo de referência deve ser maior que o inferior."}
-            )
-
-    def tem_intervalo_referencia(self) -> bool:
-        """Sem os dois limites não há como avaliar concordância clínica."""
-        return self.referencia_inferior is not None and self.referencia_superior is not None
 
 
 class SistemaAnalitico(models.Model):
