@@ -29,24 +29,78 @@ class LaboratorioAdmin(admin.ModelAdmin):
         return ", ".join(vigentes) if vigentes else "— nenhum —"
 
 
+# O que cada mecanismo de acesso realmente controla. Fica aqui, no formulário,
+# porque é onde a pessoa está quando toma a decisão errada — pôr no manual não
+# resolve. São dois sistemas paralelos e independentes, e confundi-los custa uma
+# tarde: um grupo do Django com todas as permissões marcadas não abre nada para
+# quem não é membro da equipe, e a função do laboratório não depende de grupo
+# nenhum.
+EXPLICACAO_ACESSO = (
+    "<strong>Estes campos valem só para este painel de cadastros.</strong> "
+    "As telas do programa (quadro, validações, relatórios) são governadas pela "
+    "<em>função</em>, no bloco abaixo — não por grupo nem por permissão.<br><br>"
+    "Para alguém entrar neste painel, <strong>“membro da equipe” precisa estar "
+    "marcado</strong>. Sem essa caixa, nem grupo nem permissão individual abrem "
+    "coisa alguma: a pessoa recebe a tela de login de volta. Com ela marcada, "
+    "grupos e permissões individuais somam — o que vier de qualquer um dos dois "
+    "é concedido."
+)
+
+EXPLICACAO_FUNCAO = (
+    "<strong>É isto que o programa usa.</strong> O responsável técnico é o único "
+    "que assina e libera relatório; analista e gestor lançam dados e calculam. "
+    "Vale imediatamente, sem depender de grupo nem de permissão."
+)
+
+
 @admin.register(Usuario)
 class UsuarioAdmin(UserAdmin):
-    list_display = ["username", "get_full_name", "laboratorio", "funcao", "is_active"]
+    list_display = [
+        "username", "get_full_name", "laboratorio", "funcao", "acessa_cadastros", "is_active"
+    ]
     list_filter = ["funcao", "is_active", "is_staff", "laboratorio"]
     search_fields = ["username", "first_name", "last_name", "email"]
 
-    fieldsets = UserAdmin.fieldsets + (
+    fieldsets = (
+        (None, {"fields": ("username", "password")}),
+        ("Informações pessoais", {"fields": ("first_name", "last_name", "email")}),
         (
-            "Vínculo e função",
-            {"fields": ("laboratorio", "funcao", "conselho_profissional")},
+            "Vínculo e função no laboratório",
+            {
+                "description": EXPLICACAO_FUNCAO,
+                "fields": ("laboratorio", "funcao", "conselho_profissional"),
+            },
         ),
+        (
+            "Acesso a este painel de cadastros",
+            {
+                "description": EXPLICACAO_ACESSO,
+                "fields": (
+                    "is_active", "is_staff", "is_superuser", "groups", "user_permissions",
+                ),
+            },
+        ),
+        ("Datas", {"fields": ("last_login", "date_joined"), "classes": ("collapse",)}),
     )
     add_fieldsets = UserAdmin.add_fieldsets + (
         (
             "Vínculo e função",
-            {"fields": ("laboratorio", "funcao", "conselho_profissional")},
+            {
+                "description": EXPLICACAO_FUNCAO,
+                "fields": ("laboratorio", "funcao", "conselho_profissional"),
+            },
         ),
     )
+
+    @admin.display(description="acessa cadastros", boolean=True)
+    def acessa_cadastros(self, obj):
+        """A caixa que de fato decide se a pessoa entra neste painel.
+
+        Na lista, e não só no formulário: é a resposta para "dei todas as
+        permissões e mesmo assim ele não entra" sem precisar abrir usuário
+        por usuário.
+        """
+        return obj.is_staff
 
 
 @admin.register(Assinatura)

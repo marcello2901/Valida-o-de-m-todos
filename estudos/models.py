@@ -252,6 +252,13 @@ class Estudo(models.Model):
         if self.situacao == self.CANCELADO:
             return "Estudo cancelado"
         if self.situacao == self.CONCLUIDO:
+            # Duas etapas diferentes depois do cálculo, e o card precisa dizer
+            # qual delas está travando: primeiro alguém decide o veredito,
+            # depois o responsável assina. "Aguarda liberação" num estudo sem
+            # veredito manda o responsável para um botão que vai recusá-lo.
+            veredito = getattr(self, "veredito", None)
+            if veredito is not None and not veredito.decidido():
+                return "Decidir o veredito"
             return "Aguarda liberação técnica"
 
         if not self.niveis.exists() and not self.amostras_comparacao.exists():
@@ -305,11 +312,6 @@ class NivelEstudo(models.Model):
     controle = models.ForeignKey(
         Controle, verbose_name="material de controle", on_delete=models.PROTECT, related_name="niveis_estudo"
     )
-    concentracao_declarada = models.DecimalField(
-        "concentração declarada", max_digits=14, decimal_places=4, null=True, blank=True,
-        help_text="Usada para decidir entre o limite percentual e o absoluto."
-    )
-
     # --- Alvo do bias analítico ---------------------------------------------
     #
     # A exatidão do estudo de precisão sai da comparação entre a média global das
@@ -317,18 +319,11 @@ class NivelEstudo(models.Model):
     # alvo informado o sistema não avalia exatidão: um alvo inventado produziria
     # um bias inventado, e é exatamente esse tipo de número que não pode existir
     # num relatório de validação.
-
-    ELAB = "e-Lab"
-    UNITY = "Unity"
-    FLEET = "fleet"
-    OUTRO = "outro"
-
-    PROVEDORES = [
-        (ELAB, "e-Lab"),
-        (UNITY, "Unity (Bio-Rad)"),
-        (FLEET, "fleet do fabricante"),
-        (OUTRO, "outro programa interlaboratorial"),
-    ]
+    #
+    # Os dois campos abaixo pertencem à tela de lançamento de réplicas, não ao
+    # cadastro do estudo: quem os preenche é quem tem o boletim do programa
+    # interlaboratorial na mão, no momento em que digita as réplicas daquele
+    # lote. Estavam no cadastro e simplesmente não eram preenchidos.
 
     media_interlaboratorial = models.DecimalField(
         "média do estudo interlaboratorial", max_digits=14, decimal_places=4,
@@ -338,9 +333,13 @@ class NivelEstudo(models.Model):
             "Em branco, a exatidão deste nível não é avaliada."
         ),
     )
+    # Texto livre e não lista fechada: cada laboratório nomeia o seu programa de
+    # um jeito ("Controllab EQ-Bioquímica", "Unity Bio-Rad", "fleet Abbott",
+    # o número do ciclo). Uma lista de quatro opções obrigava a marcar "outro" e
+    # perdia justamente o nome que identifica o boletim numa auditoria.
     provedor_interlaboratorial = models.CharField(
-        "programa interlaboratorial", max_length=20, choices=PROVEDORES, blank=True,
-        help_text="De onde veio a média informada — vai para o relatório.",
+        "programa interlaboratorial", max_length=80, blank=True,
+        help_text="Nome do programa de onde veio a média — vai para o relatório.",
     )
 
     class Meta:
@@ -362,7 +361,7 @@ class NivelEstudo(models.Model):
         """Frase que o relatório imprime ao lado do bias."""
         if self.media_interlaboratorial is None:
             return ""
-        return self.get_provedor_interlaboratorial_display() or "programa interlaboratorial"
+        return self.provedor_interlaboratorial.strip() or "programa interlaboratorial"
 
 
 class Replica(models.Model):
@@ -457,28 +456,45 @@ class AmostraQualitativa(models.Model):
 
 
 class Veredito(models.Model):
-    """Retrato congelado do resultado de um estudo, no momento da conclusão.
+    """Retrato congelado dos números de um estudo, e a decisão tomada sobre eles.
 
-    Guarda o resultado completo do motor em ``detalhamento``, junto da versão do
-    motor. É esse retrato que o relatório imprime — nunca um recálculo feito na
-    hora da impressão, que poderia divergir do que foi assinado.
+    Guarda o resultado completo do motor em ``detalhamento``. É esse retrato que
+    o relatório imprime — nunca um recálculo feito na hora da impressão, que
+    poderia divergir do que foi assinado.
+
+    **O veredito é humano.** O motor calcula cada indicador e diz se ele ficou
+    dentro ou fora do limite; quem decide se o método está aprovado é o
+    responsável, à luz da análise crítica. Um CV 0,1 ponto acima do limite num
+    nível pode ser aceitável com justificativa, e um estudo com todos os números
+    dentro pode ser reprovado por um motivo que nenhuma conta enxerga. Enquanto
+    ninguém decidir, o campo fica ``PENDENTE`` — e não em cima de um palpite do
+    programa, que numa auditoria seria indefensável.
     """
 
+    PENDENTE = "PENDENTE"
     APROVADO = "APROVADO"
     REPROVADO = "REPROVADO"
+    # Mantido só para ler retratos e registros gravados antes de o veredito
+    # passar a ser decidido por pessoa. Não é oferecido como escolha.
     INDETERMINADO = "INDETERMINADO"
 
     RESULTADOS = [
-        (APROVADO, "Aprovado — dentro de todos os limites especificados"),
-        (REPROVADO, "Reprovado — ao menos um indicador fora do limite"),
-        (INDETERMINADO, "Indeterminado — dados insuficientes para decidir"),
+        (PENDENTE, "Aguardando a decisão do responsável"),
+        (APROVADO, "Estudo aprovado"),
+        (REPROVADO, "Estudo reprovado"),
     ]
 
     estudo = models.OneToOneField(
         Estudo, verbose_name="estudo", on_delete=models.CASCADE, related_name="veredito"
     )
-    resultado = models.CharField("resultado", max_length=15, choices=RESULTADOS)
+    resultado = models.CharField(
+        "veredito do responsável", max_length=15, choices=RESULTADOS, default=PENDENTE,
+        help_text="Decidido por pessoa na tela do estudo, não pelo cálculo.",
+    )
     detalhamento = models.JSONField("detalhamento do cálculo", default=dict)
+    # Metadado de auditoria: diz qual motor produziu o retrato guardado ao lado.
+    # Não aparece na tela nem no relatório — serve para rastrear um recálculo
+    # divergente depois de uma atualização do sistema.
     versao_motor = models.CharField("versão do motor de cálculo", max_length=20, default=VERSAO_MOTOR)
 
     # --- Conclusão do responsável -------------------------------------------
@@ -500,6 +516,14 @@ class Veredito(models.Model):
     )
 
     calculado_em = models.DateTimeField("calculado em", auto_now_add=True)
+    # Quem decidiu o veredito e quando. Sem isso o documento afirma "aprovado"
+    # sem dizer quem afirmou — e a decisão pode ser anterior à assinatura, ou de
+    # outra pessoa, então não dá para reaproveitar ``liberado_por``.
+    decidido_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL, verbose_name="veredito decidido por", on_delete=models.PROTECT,
+        null=True, blank=True, related_name="vereditos_decididos"
+    )
+    decidido_em = models.DateTimeField("veredito decidido em", null=True, blank=True)
     liberado_por = models.ForeignKey(
         settings.AUTH_USER_MODEL, verbose_name="liberado por", on_delete=models.PROTECT,
         null=True, blank=True, related_name="vereditos_liberados"
@@ -516,6 +540,30 @@ class Veredito(models.Model):
 
     def liberado(self) -> bool:
         return self.liberado_em is not None
+
+    def decidido(self) -> bool:
+        """Diz se alguém já se pronunciou sobre este estudo."""
+        return self.resultado in {self.APROVADO, self.REPROVADO}
+
+    def leitura_do_motor(self) -> str:
+        """O que o cálculo apontou, lido do retrato congelado.
+
+        É evidência, não veredito: entra na tela ao lado das caixas de decisão
+        para que o responsável veja o que os limites disseram antes de decidir.
+        """
+        return (self.detalhamento.get("veredito") or {}).get("status", "")
+
+    def decisao_contraria_ao_calculo(self) -> bool:
+        """Diz se a pessoa decidiu ao contrário do que os limites apontaram.
+
+        Não é erro — é exatamente a liberdade que o veredito manual existe para
+        dar. Mas é o caso em que a análise crítica deixa de ser opcional, e a
+        tela precisa poder cobrá-la.
+        """
+        leitura = self.leitura_do_motor()
+        if not self.decidido() or leitura not in {self.APROVADO, self.REPROVADO}:
+            return False
+        return self.resultado != leitura
 
     def analise_editada_apos_liberacao(self) -> bool:
         """Diz se a conclusão mudou depois de o relatório ser assinado.

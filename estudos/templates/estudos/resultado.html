@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load numeros %}
 
 {% block titulo %}{{ estudo.mensurando.nome }} — {{ estudo.sistema_teste.equipamento }}{% endblock %}
 
@@ -61,6 +62,33 @@
   .nivel { margin-bottom: 18px; }
   .rotulo { font-size: 10.5px; color: var(--tinta-3); text-transform: uppercase; letter-spacing: .05em; font-weight: 600; }
 
+  /* Os dois números que estão sendo comparados, cada um com o nome do que é.
+     Um valor solto numa coluna chamada "comparado com" não diz de onde veio. */
+  /* Caixa de decisão. Fica dentro do formulário da análise crítica porque o
+     veredito é a conclusão dela, e sai no mesmo envio. */
+  .decisao {
+    margin: 14px 0 0; padding: 13px 15px; border: 1px solid var(--linha);
+    border-radius: var(--raio-menor); background: var(--faixa);
+  }
+  .decisao legend {
+    font-size: 10.5px; font-weight: 700; color: var(--tinta-3);
+    text-transform: uppercase; letter-spacing: .06em; padding: 0 6px;
+  }
+  .opcoes { display: flex; gap: 10px; flex-wrap: wrap; }
+  .opcao {
+    display: flex; align-items: center; gap: 8px; cursor: pointer;
+    padding: 9px 14px; border: 1px solid var(--linha); border-radius: var(--raio-menor);
+    background: var(--superficie); font-size: 13px; font-weight: 600; color: var(--tinta-2);
+  }
+  .opcao:hover { border-color: var(--borda); color: var(--tinta); }
+  .opcao input { width: 15px; height: 15px; margin: 0; accent-color: var(--acento); }
+  .opcao--marcada { border-color: var(--acento); background: var(--acento-fundo); color: var(--tinta); }
+
+  .confronto { display: flex; align-items: center; justify-content: flex-end; gap: 7px; }
+  .confronto em { font-style: normal; color: var(--tinta-3); font-size: 11px; }
+  .lado { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.3; }
+  .ante { font-size: 10px; color: var(--tinta-3); font-variant-numeric: normal; white-space: nowrap; }
+
   @media (max-width: 1180px) { .painel { flex-direction: column; } .lateral { width: 100%; position: static; } }
 </style>
 {% endblock %}
@@ -80,24 +108,33 @@
   <div class="cresce"></div>
   {% if tipo == "quantitativo" %}
     {% comment %}
-      Enquanto o estudo não é concluído, este número é prévia: recalcula a cada
-      carregamento e muda se a ficha do analito mudar. Só depois de congelado ele
-      é veredito. Sem essa distinção o laboratório lê "REPROVADO" numa tela de
-      trabalho e acha que já foi decidido.
+      Duas coisas diferentes, e a barra precisa distinguir as duas: a LEITURA DOS
+      LIMITES, que é conta, e o VEREDITO, que é decisão de pessoa. Antes o
+      programa exibia a conta como se fosse o veredito, e o laboratório lia
+      "REPROVADO" sem que ninguém tivesse reprovado nada.
     {% endcomment %}
     <div style="text-align: right">
-      {% with s=veredito.status %}
-      <span class="estado estado--{{ s }}">
-        {% if s == "APROVADO" %}&#10003;{% elif s == "REPROVADO" %}&#10007;{% else %}?{% endif %} {{ s }}
-      </span>
-      {% endwith %}
-      <div class="nota" style="margin-top: 4px">
-        {% if estudo.veredito %}
-          Congelado em {{ estudo.veredito.calculado_em|date:"d/m/Y" }} &middot; motor {{ estudo.veredito.versao_motor }}
-        {% else %}
-          Prévia — recalculada a cada acesso
-        {% endif %}
-      </div>
+      {% if congelado %}
+        <span class="estado estado--{{ congelado.resultado }}">
+          {% if congelado.resultado == "APROVADO" %}&#10003;{% elif congelado.resultado == "REPROVADO" %}&#10007;{% endif %}
+          {{ congelado.get_resultado_display }}
+        </span>
+        <div class="nota" style="margin-top: 4px">
+          {% if congelado.decidido %}
+            Decidido por {{ congelado.decidido_por.get_full_name|default:congelado.decidido_por.username|default:"—" }}
+            em {{ congelado.decidido_em|date:"d/m/Y" }}
+          {% else %}
+            <a href="#analise">Marque o veredito abaixo da análise crítica</a>
+          {% endif %}
+        </div>
+      {% else %}
+        {% with s=veredito.status %}
+        <span class="estado estado--{{ s }}">
+          {% if s == "APROVADO" %}&#10003;{% elif s == "REPROVADO" %}&#10007;{% else %}?{% endif %} Limites: {{ s }}
+        </span>
+        {% endwith %}
+        <div class="nota" style="margin-top: 4px">Prévia — recalculada a cada acesso</div>
+      {% endif %}
     </div>
   {% endif %}
 
@@ -126,11 +163,11 @@
     <form method="post" action="{% url 'liberar_estudo' estudo.pk %}" style="margin-left: 8px">
       {% csrf_token %}
       {% comment %}
-        Só ganha destaque de ação principal quando o método passou. Assinar um
-        estudo reprovado é legítimo — o laboratório registra que não passou —
-        mas não pode ser o botão mais chamativo da tela.
+        Só ganha destaque de ação principal quando o responsável aprovou.
+        Assinar um estudo reprovado é legítimo — o laboratório registra que não
+        passou — mas não pode ser o botão mais chamativo da tela.
       {% endcomment %}
-      <button type="submit" class="botao {% if veredito.status == 'APROVADO' %}botao--primario{% endif %}">
+      <button type="submit" class="botao {% if congelado.resultado == 'APROVADO' %}botao--primario{% endif %}">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 13.5 9 18.5 20 6.5"/></svg>
         Liberar relatório
       </button>
@@ -142,11 +179,12 @@
 {% if divergencia %}
 <div style="padding: 12px 24px 0">
   <div class="aviso">
-    <strong>O cálculo de agora não bate com o veredito congelado.</strong>
-    O retrato assinado diz <strong>{{ estudo.veredito.resultado }}</strong> e o recálculo desta tela dá
-    <strong>{{ veredito.status }}</strong>. Isso acontece quando a ficha do analito muda depois do
-    congelamento. O relatório continua imprimindo o número assinado — esta tela é de trabalho.
-    Para adotar os limites novos, recalcule.
+    <strong>O cálculo de agora não bate com o retrato congelado.</strong>
+    No congelamento os limites apontavam <strong>{{ congelado.leitura_do_motor }}</strong> e o
+    recálculo desta tela dá <strong>{{ veredito.status }}</strong>. Isso acontece quando a ficha
+    do analito muda depois do congelamento. O relatório continua imprimindo o retrato congelado —
+    esta tela é de trabalho. Para adotar os limites novos, recalcule (e o veredito volta a ser
+    marcado, porque a decisão anterior foi tomada sobre outros números).
   </div>
 </div>
 {% endif %}
@@ -382,29 +420,42 @@
           </table>
 
           <table>
-            <tr><th>Avaliação</th><th class="n">Obtido</th><th class="n">Comparado com</th><th class="n">Limite</th><th>Situação</th></tr>
-            {% for indicador in item.avaliacao.indicadores %}{% if indicador.indicador == "imprecisão" %}
+            <tr>
+              <th>Avaliação</th><th class="n">Obtido</th><th class="n">Comparação</th>
+              <th class="n">Limite</th><th>Situação</th>
+            </tr>
+            {% if item.indicador_imprecisao %}
             <tr>
               <td>Imprecisão &mdash; {{ item.estatistica.tipo_cv_aplicavel|default:"CV" }}</td>
               <td class="n"><strong>{{ item.estatistica.cv|floatformat:2|default:"—" }}%</strong></td>
-              <td class="n">&mdash;</td>
-              <td class="n">{{ indicador.limite_pct|floatformat:2|default:"—" }}%</td>
-              <td><span class="estado estado--{{ indicador.status }}" style="border: none; padding: 0">{{ indicador.status }}</span></td>
+              <td class="n">
+                <span class="confronto">
+                  <span class="lado">{{ item.estatistica.desvio_padrao|floatformat:4|default:"—" }}<span class="ante">desvio padrão</span></span>
+                  <em>&divide;</em>
+                  <span class="lado">{{ item.estatistica.media|floatformat:4|default:"—" }}<span class="ante">média global</span></span>
+                </span>
+              </td>
+              <td class="n">&plusmn; {{ item.indicador_imprecisao.limite_pct|floatformat:2|default:"—" }}%</td>
+              <td><span class="estado estado--{{ item.indicador_imprecisao.status }}" style="border: none; padding: 0">{{ item.indicador_imprecisao.status }}</span></td>
             </tr>
-            {% endif %}{% endfor %}
+            {% endif %}
 
             {% comment %}
-              Bias absoluto e relativo contra a média do grupo de pares. Sem essa
-              média informada a linha diz o que falta, em vez de sumir.
+              A linha da exatidão precisa responder quatro perguntas sem que
+              ninguém abra a calculadora: quanto deu, com sinal (para baixo ou
+              para cima do grupo de pares), contra quais dois números, qual é o
+              teto e se passou. Antes ela mostrava o percentual sem sinal e um
+              único valor solto na coluna do lado.
             {% endcomment %}
             {% if item.bias.avaliavel %}
             <tr>
               <td>
                 {% if item.origem_do_bias == "interlaboratorial" %}
-                  Exatidão &mdash; média das réplicas vs. interlaboratorial
+                  Exatidão &mdash; bias contra a média interlaboratorial
                   <div class="nota">
-                    {{ item.bias.media_obtida|floatformat:4 }} &minus; {{ item.bias.media_alvo|floatformat:4 }}
-                    = {{ item.bias.absoluto|floatformat:4 }} ({{ item.origem_do_alvo }})
+                    {{ item.bias.media_obtida|com_menos:4 }} &minus; {{ item.bias.media_alvo|com_menos:4 }}
+                    = {{ item.bias.absoluto|com_menos:4 }} {{ estudo.mensurando.unidade_medida }}
+                    {% if item.origem_do_alvo %}&middot; {{ item.origem_do_alvo }}{% endif %}
                   </div>
                 {% else %}
                   Exatidão &mdash; estimada pela reta de regressão
@@ -414,20 +465,48 @@
                   </div>
                 {% endif %}
               </td>
-              <td class="n"><strong>{{ item.bias.relativo_pct|floatformat:2 }}%</strong></td>
-              <td class="n">{{ item.bias.media_alvo|floatformat:3|default:"—" }}</td>
-              {% for indicador in item.avaliacao.indicadores %}{% if indicador.indicador == "bias" %}
-              <td class="n">{{ indicador.limite_pct|floatformat:2|default:"—" }}%</td>
-              <td><span class="estado estado--{{ indicador.status }}" style="border: none; padding: 0">{{ indicador.status }}</span></td>
-              {% endif %}{% endfor %}
+              <td class="n">
+                <strong>{{ item.bias.relativo_pct|sinalizado:2 }}%</strong>
+                <div class="nota" style="white-space: nowrap">
+                  {% if item.bias.relativo_pct > 0 %}
+                    bias positivo &mdash; acima
+                  {% elif item.bias.relativo_pct < 0 %}
+                    bias negativo &mdash; abaixo
+                  {% else %}
+                    sem desvio
+                  {% endif %}
+                </div>
+              </td>
+              <td class="n">
+                <span class="confronto">
+                  <span class="lado">{{ item.bias.media_obtida|floatformat:4|default:"—" }}<span class="ante">média das réplicas</span></span>
+                  <em>vs.</em>
+                  <span class="lado">{{ item.bias.media_alvo|floatformat:4|default:"—" }}<span class="ante">{% if item.origem_do_bias == "interlaboratorial" %}média interlaboratorial{% else %}nível da reta{% endif %}</span></span>
+                </span>
+              </td>
+              <td class="n">
+                {% if item.indicador_bias.limite_pct %}
+                  &plusmn; {{ item.indicador_bias.limite_pct|floatformat:2 }}%
+                  <div class="nota">bias máximo</div>
+                {% else %}
+                  <span style="color: var(--atencao-tinta)">sem limite</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if item.indicador_bias %}
+                  <span class="estado estado--{{ item.indicador_bias.status }}" style="border: none; padding: 0">{{ item.indicador_bias.status }}</span>
+                  {% if item.indicador_bias.motivo %}<div class="nota">{{ item.indicador_bias.motivo }}</div>{% endif %}
+                {% else %}
+                  <span class="estado estado--INDETERMINADO" style="border: none; padding: 0">INDETERMINADO</span>
+                {% endif %}
+              </td>
             </tr>
             {% else %}
             <tr>
               <td>Exatidão</td>
               <td class="n" colspan="4" style="text-align: left; color: var(--atencao-tinta)">
                 Não avaliada &mdash; informe a média que os outros laboratórios obtiveram
-                com este mesmo lote de controle (e-Lab, Unity, fleet) na tela de
-                lançamento de réplicas.
+                com este mesmo lote de controle na tela de lançamento de réplicas.
               </td>
             </tr>
             {% endif %}
@@ -606,15 +685,17 @@
     {% if estudo.veredito %}
     <details class="cartao faixa" open id="analise">
       <summary>
-        <span class="marcador {% if estudo.veredito.analise_critica %}marcador--pronto{% else %}marcador--corrente{% endif %}">
-          {% if estudo.veredito.analise_critica %}&#10003;{% else %}!{% endif %}
+        <span class="marcador {% if congelado.decidido %}marcador--pronto{% else %}marcador--corrente{% endif %}">
+          {% if congelado.decidido %}&#10003;{% else %}!{% endif %}
         </span>
-        <span class="titulo-faixa">Conclusão / análise crítica</span>
+        <span class="titulo-faixa">Conclusão e veredito</span>
         <span class="resumo">
-          {% if estudo.veredito.analise_critica %}
-            Escrita em {{ estudo.veredito.analise_atualizada_em|date:"d/m/Y H:i" }}
+          {% if not congelado.decidido %}
+            Falta marcar se o estudo foi aprovado ou reprovado
+          {% elif estudo.veredito.analise_critica %}
+            {{ congelado.get_resultado_display }} &middot; conclusão escrita em {{ estudo.veredito.analise_atualizada_em|date:"d/m/Y H:i" }}
           {% else %}
-            O que os números não dizem — e o relatório precisa registrar
+            {{ congelado.get_resultado_display }} &middot; sem conclusão escrita
           {% endif %}
         </span>
         <svg class="seta" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--tinta-3)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>
@@ -634,14 +715,50 @@
           <textarea name="analise_critica" rows="8"
                     placeholder="Ex.: o nível 1 reprovou na exatidão. O lote de controle CT1-2026A estava a 12 dias do vencimento e o frasco havia sido aberto na semana anterior. Repetido com lote novo, o desvio caiu para 2,1%. Mantido o método."
                     aria-label="Conclusão e análise crítica do estudo">{{ estudo.veredito.analise_critica }}</textarea>
-          <div style="display: flex; align-items: center; gap: 12px; margin-top: 11px">
-            <button type="submit" class="botao">
+          {% comment %}
+            O veredito fica aqui, logo abaixo do texto, porque é a conclusão
+            dele — e no mesmo envio, para o texto nunca ficar salvo com o
+            veredito em branco. As duas opções são excludentes: um estudo não
+            pode estar aprovado e reprovado ao mesmo tempo, e duas caixas
+            independentes deixariam marcar as duas.
+          {% endcomment %}
+          <fieldset class="decisao">
+            <legend>Veredito do estudo</legend>
+            <p class="nota" style="margin: 0 0 9px">
+              O cálculo mede cada indicador contra o seu limite; quem decide sobre o
+              método é você. A leitura dos limites foi
+              <strong>{{ congelado.leitura_do_motor|default:"—" }}</strong>.
+            </p>
+            <div class="opcoes">
+              <label class="opcao {% if congelado.resultado == 'REPROVADO' %}opcao--marcada{% endif %}">
+                <input type="radio" name="veredito" value="REPROVADO"
+                       {% if congelado.resultado == "REPROVADO" %}checked{% endif %}
+                       {% if estudo.situacao == "liberado" %}disabled{% endif %}>
+                <span>Estudo Reprovado</span>
+              </label>
+              <label class="opcao {% if congelado.resultado == 'APROVADO' %}opcao--marcada{% endif %}">
+                <input type="radio" name="veredito" value="APROVADO"
+                       {% if congelado.resultado == "APROVADO" %}checked{% endif %}
+                       {% if estudo.situacao == "liberado" %}disabled{% endif %}>
+                <span>Estudo Aprovado</span>
+              </label>
+            </div>
+            {% if congelado.decisao_contraria_ao_calculo %}
+            <p class="nota" style="margin: 9px 0 0; color: var(--atencao-tinta)">
+              O veredito marcado é o oposto do que os limites apontaram. É legítimo &mdash;
+              é para isso que a decisão é sua &mdash; mas o motivo precisa estar escrito acima.
+            </p>
+            {% endif %}
+          </fieldset>
+
+          <div style="display: flex; align-items: center; gap: 12px; margin-top: 13px">
+            <button type="submit" class="botao botao--primario">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7"/></svg>
-              Salvar conclusão
+              Salvar conclusão e veredito
             </button>
             <span class="nota">
-              Vai para o relatório em PDF, abaixo dos resultados. Pode ser editada
-              a qualquer momento — cada edição fica registrada.
+              Vão para o relatório em PDF, o veredito logo abaixo da conclusão. Podem
+              ser revistos enquanto o relatório não é liberado &mdash; cada mudança fica registrada.
             </span>
           </div>
         </form>
@@ -652,8 +769,8 @@
     <section class="cartao" style="padding: 15px 18px">
       <p class="nota" style="margin: 0 0 8px">
         Cálculo executado a partir dos dados brutos registrados. Este documento reflete o estado
-        atual do estudo; ele só se torna registro de qualidade após a liberação pelo responsável
-        técnico, quando o resultado é congelado junto da versão do motor que o produziu.
+        atual do estudo; ele só se torna registro de qualidade após o responsável técnico marcar
+        o veredito e liberar o relatório.
       </p>
       <p class="nota" style="margin: 0">
         Procedimentos conforme descritos em CLSI EP15, EP09 e EP12. O sistema não é certificado nem

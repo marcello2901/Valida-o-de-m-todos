@@ -59,12 +59,17 @@ class SomenteLeituraAposLiberacao:
 
 
 class NivelEstudoInline(SomenteLeituraAposLiberacao, admin.TabularInline):
+    """Só o que define o nível: qual é e com que material foi medido.
+
+    A média interlaboratorial e o nome do programa saíram daqui de propósito.
+    Eles são preenchidos na tela de lançamento de réplicas, junto das medições
+    do mesmo lote — que é o momento em que o boletim do programa está aberto na
+    mesa. Aqui, no cadastro do estudo, ficavam em branco.
+    """
+
     model = NivelEstudo
     extra = 1
-    fields = [
-        "numero", "controle", "concentracao_declarada",
-        "media_interlaboratorial", "provedor_interlaboratorial",
-    ]
+    fields = ["numero", "controle"]
 
 
 class AmostraComparacaoInline(SomenteLeituraAposLiberacao, admin.TabularInline):
@@ -179,8 +184,7 @@ class ReplicaInline(SomenteLeituraAposLiberacao, admin.TabularInline):
 @admin.register(NivelEstudo)
 class NivelEstudoAdmin(SomenteLeituraAposLiberacao, admin.ModelAdmin):
     list_display = [
-        "estudo", "numero", "controle", "concentracao_declarada",
-        "media_interlaboratorial", "total_replicas",
+        "estudo", "numero", "controle", "media_interlaboratorial", "total_replicas",
     ]
     list_filter = ["estudo__laboratorio", "numero"]
     inlines = [ReplicaInline]
@@ -198,8 +202,8 @@ class VereditoAdmin(admin.ModelAdmin):
     exatamente o que a rastreabilidade existe para impedir.
     """
 
-    list_display = ["estudo", "resultado", "versao_motor", "calculado_em", "liberado_por", "liberado_em"]
-    list_filter = ["resultado", "versao_motor"]
+    list_display = ["estudo", "resultado", "decidido_por", "decidido_em", "liberado_por", "liberado_em"]
+    list_filter = ["resultado"]
     search_fields = ["estudo__identificacao"]
 
     def has_add_permission(self, request):

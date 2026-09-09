@@ -125,11 +125,11 @@ def calcular_precisao(estudo) -> list[dict]:
             agrupadas, estudo.desenho_precisao, nivel.alvo_do_bias()
         )
 
-        # Concentração usada para resolver limite percentual contra absoluto:
-        # a declarada pelo fabricante quando houver, senão a média medida.
-        concentracao = _decimal_para_float(nivel.concentracao_declarada)
-        if concentracao is None:
-            concentracao = estatistica["media"]
+        # Concentração usada para resolver limite percentual contra absoluto.
+        # É a média medida: era o que o programa já usava quase sempre, porque a
+        # concentração declarada quase nunca era preenchida — e quando era, punha
+        # o número da bula a decidir um limite sobre medições que são outras.
+        concentracao = estatistica["media"]
 
         resultados.append(
             {
@@ -214,6 +214,11 @@ def calcular(estudo) -> dict:
         avaliacao = por_numero.get(item["numero"])
         item["avaliacao"] = avaliacao
         item["medidor_pct"] = _proporcao_do_limite(item["estatistica"]["cv_aplicavel"], avaliacao)
+        # Cada indicador nomeado, em vez de a tela varrer a lista dentro de uma
+        # célula de tabela. Varrendo, a linha perdia duas colunas quando o
+        # indicador não existia — a tabela saía torta e ninguém via o limite.
+        item["indicador_imprecisao"] = _indicador(avaliacao, "imprecisão")
+        item["indicador_bias"] = _indicador(avaliacao, "bias")
 
     return {
         "estudo": estudo,
@@ -228,6 +233,14 @@ def calcular(estudo) -> dict:
         "graficos": _graficos(estudo, precisao_por_nivel, comparabilidade),
         "avisos": _avisos(estudo, precisao_por_nivel, comparabilidade),
     }
+
+
+def _indicador(avaliacao, nome: str) -> dict | None:
+    """Um indicador da avaliação de um nível, pelo nome, ou ``None``."""
+    for indicador in (avaliacao or {}).get("indicadores", []):
+        if indicador.get("indicador") == nome:
+            return indicador
+    return None
 
 
 # Nomes das duas origens possíveis do bias, para a tela e o relatório dizerem
@@ -562,12 +575,16 @@ def concluir(estudo, usuario):
     analise = anterior.analise_critica if anterior else ""
     analise_em = anterior.analise_atualizada_em if anterior else None
 
+    # A decisão, ao contrário do texto, NÃO atravessa. Ela foi tomada sobre os
+    # números antigos; recalcular troca os números. Manter o "aprovado" em cima
+    # de outra conta seria assinar o que ninguém leu — o veredito volta a
+    # pendente e é decidido de novo.
     with transaction.atomic():
         if anterior is not None:
             anterior.delete()
         veredito = Veredito.objects.create(
             estudo=estudo,
-            resultado=resultado["veredito"]["status"],
+            resultado=Veredito.PENDENTE,
             detalhamento=resultado,
             analise_critica=analise,
             analise_atualizada_em=analise_em,
@@ -582,9 +599,9 @@ def concluir(estudo, usuario):
             acao="recalculou o estudo" if anterior else "calculou o estudo",
             objeto=estudo.identificacao,
             detalhe={
-                "resultado": veredito.resultado,
+                "leitura_do_motor": veredito.leitura_do_motor(),
                 "versao_motor": veredito.versao_motor,
-                "resultado_anterior": anterior.resultado if anterior else None,
+                "veredito_anterior": anterior.resultado if anterior else None,
                 "replicas": andamento["precisao_feita"],
                 "amostras": andamento["comparacao_feita"],
                 "avisos": resultado.get("avisos", []),
@@ -633,13 +650,65 @@ def registrar_analise_critica(estudo, usuario, texto: str) -> str:
     return "editada" if anterior else "escrita"
 
 
-def liberar(estudo, usuario):
-    """Assina o veredito congelado, transformando-o em registro de qualidade.
+def registrar_veredito(estudo, usuario, escolha: str) -> str:
+    """Grava a decisão do responsável sobre o estudo: aprovado ou reprovado.
 
-    Reprovado e indeterminado também se assinam: um estudo que falhou é um
-    resultado, e escondê-lo seria pior do que registrá-lo. O que a assinatura
-    afirma é que aquele cálculo, com aqueles dados, foi conferido — não que o
-    método passou.
+    Quem decide é pessoa. O motor mede cada indicador contra o seu limite e diz
+    o que ficou dentro e o que ficou fora; transformar isso automaticamente num
+    "método aprovado" é atribuir ao programa um julgamento que é do laboratório.
+    Um CV meio ponto acima do limite num nível pode ser aceitável com
+    justificativa registrada; um estudo com todos os números dentro pode ser
+    reprovado por um motivo que nenhuma conta enxerga.
+
+    A decisão é rastreada como qualquer outra: quem, quando, o que o cálculo
+    apontava na hora e se a pessoa decidiu ao contrário dele.
+    """
+    veredito = getattr(estudo, "veredito", None)
+    if veredito is None:
+        raise AcaoRecusada(
+            "O veredito é decidido sobre um cálculo congelado. Calcule o estudo primeiro."
+        )
+    if estudo.situacao == estudo.LIBERADO:
+        raise AcaoRecusada(
+            "Este relatório já foi assinado. O veredito de um documento liberado "
+            "não se troca — cancele o estudo e abra outro."
+        )
+    if escolha not in {Veredito.APROVADO, Veredito.REPROVADO}:
+        raise AcaoRecusada("Marque uma das duas caixas: estudo aprovado ou estudo reprovado.")
+
+    if veredito.resultado == escolha:
+        return "sem_mudanca"
+
+    anterior = veredito.resultado
+    with transaction.atomic():
+        veredito.resultado = escolha
+        veredito.decidido_por = usuario if usuario.is_authenticated else None
+        veredito.decidido_em = timezone.now()
+        veredito.save(update_fields=["resultado", "decidido_por", "decidido_em"])
+
+        RegistroAuditoria.objects.create(
+            laboratorio=estudo.laboratorio,
+            usuario=usuario if usuario.is_authenticated else None,
+            acao="decidiu o veredito" if anterior == Veredito.PENDENTE else "mudou o veredito",
+            objeto=estudo.identificacao,
+            detalhe={
+                "veredito": escolha,
+                "veredito_anterior": anterior,
+                "leitura_do_motor": veredito.leitura_do_motor(),
+                "contraria_o_calculo": veredito.decisao_contraria_ao_calculo(),
+                "tem_analise_critica": bool(veredito.analise_critica.strip()),
+            },
+        )
+
+    return "decidido" if anterior == Veredito.PENDENTE else "alterado"
+
+
+def liberar(estudo, usuario):
+    """Assina o veredito decidido, transformando-o em registro de qualidade.
+
+    Reprovado também se assina: um estudo que falhou é um resultado, e
+    escondê-lo seria pior do que registrá-lo. O que a assinatura afirma é que
+    aquele cálculo, com aqueles dados, foi conferido — não que o método passou.
     """
     if not usuario.pode_assinar_relatorio():
         raise AcaoRecusada(
@@ -651,6 +720,14 @@ def liberar(estudo, usuario):
     veredito = getattr(estudo, "veredito", None)
     if veredito is None:
         raise AcaoRecusada("Calcule o estudo antes de liberar o relatório.")
+    # Sem esta trava o relatório assinado sairia com "aguardando a decisão do
+    # responsável" no lugar do veredito — assinado e sem dizer o quê.
+    if not veredito.decidido():
+        raise AcaoRecusada(
+            "Marque o veredito antes de liberar: o relatório precisa dizer se o "
+            "estudo foi aprovado ou reprovado. As caixas ficam abaixo da análise "
+            "crítica, na tela do estudo."
+        )
 
     with transaction.atomic():
         veredito.liberado_por = usuario
@@ -666,7 +743,8 @@ def liberar(estudo, usuario):
             acao="liberou o relatório",
             objeto=estudo.identificacao,
             detalhe={
-                "resultado": veredito.resultado,
+                "veredito": veredito.resultado,
+                "decidido_por": getattr(veredito.decidido_por, "username", None),
                 "versao_motor": veredito.versao_motor,
                 "calculado_em": veredito.calculado_em.isoformat(),
             },
@@ -831,7 +909,6 @@ def acrescentar_nivel(estudo, controle_id: str, media_alvo: str = "") -> str:
         estudo=estudo,
         numero=proximo,
         controle=controle,
-        concentracao_declarada=controle.valor_alvo,
         media_interlaboratorial=alvo,
     )
     return ""

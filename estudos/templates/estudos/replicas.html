@@ -95,18 +95,23 @@
               Média deste mesmo lote no grupo de pares. É contra ela que a
               exatidão é medida — não contra o valor alvo do fabricante.
             </p>
-            <div class="par">
-              <input type="text" inputmode="decimal" id="alvo_{{ coluna.nivel.pk }}"
-                     name="alvo_{{ coluna.nivel.pk }}"
-                     value="{{ coluna.nivel.media_interlaboratorial|default_if_none:'' }}"
-                     placeholder="sem alvo">
-              <select name="provedor_{{ coluna.nivel.pk }}" style="width: 108px" aria-label="Programa interlaboratorial do nível {{ coluna.nivel.numero }}">
-                <option value="">—</option>
-                {% for valor, rotulo in provedores %}
-                <option value="{{ valor }}" {% if coluna.nivel.provedor_interlaboratorial == valor %}selected{% endif %}>{{ valor }}</option>
-                {% endfor %}
-              </select>
-            </div>
+            <input type="text" inputmode="decimal" id="alvo_{{ coluna.nivel.pk }}"
+                   name="alvo_{{ coluna.nivel.pk }}"
+                   value="{{ coluna.nivel.media_interlaboratorial|default_if_none:'' }}"
+                   placeholder="sem alvo">
+          </div>
+          {% comment %}
+            Campo livre, e não lista fechada: cada laboratório chama o seu
+            programa de um jeito, e é esse nome — com o ciclo, quando o usuário
+            escreve — que identifica o boletim numa auditoria. A lista de quatro
+            opções obrigava a marcar "outro" e jogava fora justamente o nome.
+          {% endcomment %}
+          <div class="campo" style="margin-top: 9px">
+            <label for="provedor_{{ coluna.nivel.pk }}">Programa interlaboratorial</label>
+            <input type="text" id="provedor_{{ coluna.nivel.pk }}"
+                   name="provedor_{{ coluna.nivel.pk }}" maxlength="80"
+                   value="{{ coluna.nivel.provedor_interlaboratorial }}"
+                   placeholder="ex.: Controllab EQ — ciclo 3/2026">
           </div>
         </div>
 

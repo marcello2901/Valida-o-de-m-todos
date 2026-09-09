@@ -59,10 +59,15 @@
             {% if card.estudo.sistema_comparacao %}&rarr; {{ card.estudo.sistema_comparacao.equipamento }}{% endif %}
           </p>
         </div>
+        {% comment %}
+          O card mostra o veredito de pessoa, não a leitura dos limites. Um
+          estudo calculado e ainda não decidido diz que falta decidir — que é a
+          ação que o quadro existe para tornar visível.
+        {% endcomment %}
         {% if card.veredito %}
         <span class="estado estado--{{ card.veredito.resultado }}">
           {% if card.veredito.resultado == "APROVADO" %}&#10003;{% elif card.veredito.resultado == "REPROVADO" %}&#10007;{% else %}?{% endif %}
-          {{ card.veredito.resultado }}
+          {% if card.veredito.decidido %}{{ card.veredito.resultado }}{% else %}A DECIDIR{% endif %}
         </span>
         {% endif %}
       </div>

@@ -123,10 +123,11 @@
 
   {% if divergencia %}
   <div class="aviso" style="margin-top: 16px">
-    <strong>Atenção:</strong> o recálculo feito para esta impressão não coincide com o
-    veredito congelado. O veredito assinado diz <strong>{{ congelado.resultado }}</strong> e o
-    recálculo dá <strong>{{ veredito.status }}</strong> — sinal de que a ficha do analito mudou
-    depois do congelamento. Recalcule o estudo antes de emitir o relatório.
+    <strong>Atenção:</strong> o recálculo feito para esta impressão não coincide com os números
+    congelados. Na data do congelamento os limites apontavam
+    <strong>{{ congelado.leitura_do_motor }}</strong> e agora apontam
+    <strong>{{ veredito.status }}</strong> — sinal de que a ficha do analito mudou depois do
+    congelamento. Recalcule o estudo antes de emitir o relatório.
   </div>
   {% endif %}
 
@@ -139,8 +140,6 @@
       <div><dt>Módulo</dt><dd>{{ estudo.modulo_curto }}</dd></div>
       <div><dt>Desenho da precisão</dt><dd>{{ estudo.get_desenho_precisao_display }}</dd></div>
       <div><dt>Período</dt><dd>{{ estudo.data_inicio|date:"d/m/Y" }}{% if estudo.data_conclusao %} a {{ estudo.data_conclusao|date:"d/m/Y" }}{% endif %}</dd></div>
-      <div><dt>Cálculo congelado em</dt><dd>{{ congelado.calculado_em|date:"d/m/Y H:i" }}</dd></div>
-      <div><dt>Versão do motor</dt><dd>{{ congelado.versao_motor }}</dd></div>
     </dl>
   </div>
 
@@ -333,18 +332,12 @@
   </div>
   {% endif %}
 
-  <div class="veredito-final">
-    <div>
-      <div class="rotulo" style="font-size: 10px; color: var(--tinta-3); text-transform: uppercase; letter-spacing: .06em">Veredito</div>
-      <div class="palavra">{{ congelado.get_resultado_display }}</div>
-    </div>
-    <div class="cresce"></div>
-    <div style="text-align: right; font-size: 11.5px; color: var(--tinta-2)">
-      Congelado em {{ congelado.calculado_em|date:"d/m/Y H:i" }}<br>
-      Motor de cálculo versão {{ congelado.versao_motor }}
-    </div>
-  </div>
-
+  {% comment %}
+    A conclusão vem antes do veredito porque é dela que o veredito sai: quem lê
+    o documento encontra primeiro o raciocínio e depois a decisão, e não o
+    contrário. O veredito é de pessoa — não é a saída do cálculo — então traz o
+    nome de quem decidiu.
+  {% endcomment %}
   <div class="bloco">
     <h2>Conclusão / análise crítica</h2>
     {% if congelado.analise_critica %}
@@ -361,6 +354,22 @@
       acompanha este relatório.
     </div>
     {% endif %}
+  </div>
+
+  <div class="veredito-final">
+    <div>
+      <div class="rotulo" style="font-size: 10px; color: var(--tinta-3); text-transform: uppercase; letter-spacing: .06em">Veredito</div>
+      <div class="palavra">{{ congelado.get_resultado_display }}</div>
+    </div>
+    <div class="cresce"></div>
+    <div style="text-align: right; font-size: 11.5px; color: var(--tinta-2)">
+      {% if congelado.decidido_por %}
+        Decidido por {{ congelado.decidido_por.get_full_name|default:congelado.decidido_por.username }}<br>
+        em {{ congelado.decidido_em|date:"d/m/Y H:i" }}
+      {% else %}
+        Veredito ainda não registrado
+      {% endif %}
+    </div>
   </div>
 
   <div class="assinatura">
@@ -391,7 +400,8 @@
     EP12 (métodos qualitativos). Este sistema não é certificado nem endossado pelo CLSI; a
     responsabilidade pela validação e por sua interpretação permanece do laboratório e de seu
     responsável técnico. Os cálculos foram executados sobre os dados brutos registrados no
-    sistema, congelados na data indicada junto do veredito.
+    sistema. O veredito acima é a decisão do responsável à luz da análise crítica, e não a
+    saída automática dos cálculos.
   </div>
 </div>
 {% endblock %}

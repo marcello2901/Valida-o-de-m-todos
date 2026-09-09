@@ -255,6 +255,10 @@ class Command(BaseCommand):
         return estudo
 
     def _dados_brutos(self, estudo: Estudo, teste: SistemaAnalitico):
+        # O controle é do analisador **e do analito**: o mesmo equipamento roda
+        # dezenas de ensaios, cada um com o seu material de controle nos mesmos
+        # três níveis. Buscar só por sistema e nível trazia os três controles de
+        # nível 1 do aparelho e quebrava a carga de exemplo.
         # Precisão: 3 níveis × 5 corridas × 5 réplicas, o desenho de referência.
         # Cada corrida traz um pequeno deslocamento próprio, como acontece na
         # rotina após recalibração ou troca de frasco. É essa variação entre dias
@@ -285,7 +289,9 @@ class Command(BaseCommand):
         }
 
         for numero, corridas in replicas_por_nivel.items():
-            controle = Controle.objects.get(sistema=teste, nivel=numero)
+            controle = Controle.objects.get(
+                sistema=teste, nivel=numero, mensurando=estudo.mensurando
+            )
             # A média do grupo de pares fica um pouco acima do alvo do fabricante,
             # como costuma acontecer: é ela, e não o alvo, que define a exatidão.
             media_pares = {1: "0.6100", 2: "1.3200", 3: "3.2400"}[numero]
@@ -294,9 +300,8 @@ class Command(BaseCommand):
                 numero=numero,
                 defaults={
                     "controle": controle,
-                    "concentracao_declarada": controle.valor_alvo,
                     "media_interlaboratorial": Decimal(media_pares),
-                    "provedor_interlaboratorial": NivelEstudo.ELAB,
+                    "provedor_interlaboratorial": "Controllab — EQ Bioquímica",
                 },
             )
             if not criado:
@@ -400,7 +405,6 @@ class Command(BaseCommand):
             # nível em que a exatidão não é avaliada, e a tela diz o porquê.
             nivel = NivelEstudo.objects.create(
                 estudo=em_coleta, numero=1, controle=controle_hba1c,
-                concentracao_declarada=Decimal("5.6000"),
             )
             for sequencia, valor in enumerate(
                 ["5.58", "5.62", "5.59", "5.61", "5.57", "5.63"], start=1
@@ -449,9 +453,8 @@ class Command(BaseCommand):
             # a tela mostrar campo em branco onde deveria haver número assinado.
             nivel = NivelEstudo.objects.create(
                 estudo=liberado, numero=1, controle=controle_glicose,
-                concentracao_declarada=Decimal("95.0000"),
                 media_interlaboratorial=Decimal("95.4000"),
-                provedor_interlaboratorial=NivelEstudo.UNITY,
+                provedor_interlaboratorial="Unity Bio-Rad",
             )
             corridas = [
                 ["94.2", "95.1", "94.7", "95.4", "94.6"],
@@ -482,13 +485,26 @@ class Command(BaseCommand):
                 )
 
             resultado = servicos.retrato(liberado)
+            # A liberação acompanha a conclusão do estudo. Com timezone.now() a
+            # demonstração mostrava um estudo concluído em 2025 e liberado no
+            # ano seguinte — incoerência que salta aos olhos no card.
+            assinado_em = timezone.make_aware(datetime(2025, 11, 21, 15, 40))
             Veredito.objects.create(
-                estudo=liberado, resultado=resultado["veredito"]["status"],
+                estudo=liberado,
+                # O veredito é de pessoa. Num estudo já assinado ele existe, e
+                # com autoria: sem isso a demonstração mostraria um relatório
+                # liberado dizendo "veredito ainda não registrado".
+                resultado=Veredito.APROVADO,
+                decidido_por=usuario,
+                decidido_em=assinado_em,
                 detalhamento=resultado,
+                analise_critica=(
+                    "Todos os indicadores dentro dos limites da ficha do analito. "
+                    "Nível 1 com bias de −1,6% contra o grupo de pares, dentro do "
+                    "bias máximo. Método liberado para uso na rotina."
+                ),
+                analise_atualizada_em=assinado_em,
                 liberado_por=usuario,
-                # A liberação acompanha a conclusão do estudo. Com timezone.now()
-                # a demonstração mostrava um estudo concluído em 2025 e liberado
-                # no ano seguinte — incoerência que salta aos olhos no card.
-                liberado_em=timezone.make_aware(datetime(2025, 11, 21, 15, 40)),
+                liberado_em=assinado_em,
             )
 
