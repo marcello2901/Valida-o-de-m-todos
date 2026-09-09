@@ -93,9 +93,7 @@ def montar_estudo(laboratorio: Laboratorio, usuario: Usuario) -> Estudo:
         criado_por=usuario,
     )
 
-    nivel = NivelEstudo.objects.create(
-        estudo=estudo, numero=1, controle=controle, concentracao_declarada=Decimal("1.3")
-    )
+    nivel = NivelEstudo.objects.create(estudo=estudo, numero=1, controle=controle)
     for corrida in range(1, 6):
         for sequencia, valor in enumerate(["1.28", "1.30", "1.32", "1.29", "1.31"], start=1):
             Replica.objects.create(
@@ -388,9 +386,17 @@ class TestCalcularELiberar(TestCase):
         self.estudo.refresh_from_db()
         self.assertEqual(self.estudo.situacao, Estudo.CONCLUIDO)
 
+    def _decidir(self, escolha=Veredito.APROVADO):
+        """Marca o veredito, que é o que destrava a liberação."""
+        self.client.post(
+            reverse("analise_estudo", args=[self.estudo.pk]),
+            {"analise_critica": "", "veredito": escolha},
+        )
+
     def test_responsavel_libera_e_assina(self):
         self.client.force_login(self.responsavel)
         self.client.post(self.calcular_url)
+        self._decidir()
 
         self.client.post(self.liberar_url)
 
@@ -411,7 +417,9 @@ class TestCalcularELiberar(TestCase):
         # Recalcular um relatório assinado descolaria o número do que se assinou.
         self.client.force_login(self.responsavel)
         self.client.post(self.calcular_url)
+        self._decidir()
         self.client.post(self.liberar_url)
+        self.estudo.refresh_from_db()
         congelado_em = self.estudo.veredito.calculado_em
 
         self.client.post(self.calcular_url)
@@ -426,7 +434,8 @@ class TestCalcularELiberar(TestCase):
         # que os dois deixaram de bater.
         self.client.force_login(self.responsavel)
         self.client.post(self.calcular_url)
-        self.assertEqual(self.estudo.veredito.resultado, Veredito.APROVADO)
+        self.estudo.refresh_from_db()
+        self.assertEqual(self.estudo.veredito.leitura_do_motor(), Veredito.APROVADO)
 
         ficha = self.estudo.especificacao
         ficha.erro_total_maximo_pct = Decimal("1.00")
@@ -435,7 +444,7 @@ class TestCalcularELiberar(TestCase):
 
         resposta = self.client.get(reverse("resultado_estudo", args=[self.estudo.pk]))
 
-        self.assertContains(resposta, "não bate com o veredito congelado")
+        self.assertContains(resposta, "não bate com o retrato congelado")
 
 
 class TestGradeDeReplicas(TestCase):
@@ -526,12 +535,34 @@ class TestGradeDeReplicas(TestCase):
     def test_a_media_interlaboratorial_e_gravada_junto(self):
         self.client.post(
             self.url,
-            {f"alvo_{self.nivel.pk}": "1,32", f"provedor_{self.nivel.pk}": NivelEstudo.ELAB},
+            {
+                f"alvo_{self.nivel.pk}": "1,32",
+                f"provedor_{self.nivel.pk}": "Controllab EQ — ciclo 3/2026",
+            },
         )
 
         self.nivel.refresh_from_db()
         self.assertEqual(self.nivel.media_interlaboratorial, Decimal("1.3200"))
-        self.assertEqual(self.nivel.provedor_interlaboratorial, NivelEstudo.ELAB)
+        self.assertEqual(
+            self.nivel.provedor_interlaboratorial, "Controllab EQ — ciclo 3/2026"
+        )
+
+    def test_o_programa_interlaboratorial_e_texto_livre(self):
+        # Era uma lista de quatro opções. Cada laboratório nomeia o seu programa
+        # de um jeito, e é esse nome que identifica o boletim numa auditoria.
+        resposta = self.client.get(self.url)
+
+        self.assertContains(resposta, f'name="provedor_{self.nivel.pk}"')
+        self.assertNotContains(resposta, f'<select name="provedor_{self.nivel.pk}"')
+
+    def test_nome_de_programa_gigante_e_cortado_e_nao_estoura(self):
+        self.client.post(
+            self.url,
+            {f"alvo_{self.nivel.pk}": "1,32", f"provedor_{self.nivel.pk}": "P" * 300},
+        )
+
+        self.nivel.refresh_from_db()
+        self.assertEqual(len(self.nivel.provedor_interlaboratorial), 80)
 
     def test_acrescentar_nivel_cria_a_coluna(self):
         outro = Controle.objects.create(
@@ -1045,12 +1076,12 @@ class TestAnaliseCritica(TestCase):
     def test_a_caixa_so_aparece_depois_do_congelamento(self):
         # Antes do cálculo não há resultado para analisar criticamente.
         antes = self.client.get(reverse("resultado_estudo", args=[self.estudo.pk]))
-        self.assertNotContains(antes, "Conclusão / análise crítica")
+        self.assertNotContains(antes, "Conclusão e veredito")
 
         self.calcular()
 
         depois = self.client.get(reverse("resultado_estudo", args=[self.estudo.pk]))
-        self.assertContains(depois, "Conclusão / análise crítica")
+        self.assertContains(depois, "Conclusão e veredito")
 
     def test_grava_o_texto_no_veredito(self):
         self.calcular()
@@ -1081,6 +1112,7 @@ class TestAnaliseCritica(TestCase):
         # A análise crítica amadurece; os números do veredito não mudam. Mas o
         # leitor precisa saber que o texto não é o do dia da assinatura.
         self.calcular()
+        self.client.post(self.url, {"analise_critica": "", "veredito": "APROVADO"})
         self.client.post(reverse("liberar_estudo", args=[self.estudo.pk]))
 
         self.client.post(self.url, {"analise_critica": "Revisto após a auditoria interna."})
@@ -1315,3 +1347,303 @@ class TestRazaoDasMediasConclui(TestCase):
 
         self.assertContains(resposta, "Razão das médias")
         self.assertContains(resposta, "estado--REPROVADO")
+
+
+class TestVereditoDecididoPorPessoa(TestCase):
+    """O programa mede; quem julga é o responsável.
+
+    O motor compara cada indicador com o seu limite e diz o que ficou dentro e
+    o que ficou fora. Transformar isso automaticamente num "método aprovado" é
+    atribuir ao programa um julgamento que é do laboratório — e um relatório
+    que afirma "aprovado" sem nome de quem aprovou não se sustenta numa
+    auditoria. Este bloco guarda essa separação.
+    """
+
+    def setUp(self):
+        self.laboratorio = montar_laboratorio("Lab A", "11.111.111/0001-11")
+        self.analista = Usuario.objects.create_user(
+            username="analista", password="senha-longa-de-teste",
+            laboratorio=self.laboratorio, funcao=Usuario.ANALISTA,
+        )
+        self.responsavel = Usuario.objects.create_user(
+            username="rt", password="senha-longa-de-teste",
+            laboratorio=self.laboratorio, funcao=Usuario.RESPONSAVEL,
+        )
+        self.estudo = montar_estudo(self.laboratorio, self.analista)
+        self.calcular_url = reverse("concluir_estudo", args=[self.estudo.pk])
+        self.analise_url = reverse("analise_estudo", args=[self.estudo.pk])
+        self.liberar_url = reverse("liberar_estudo", args=[self.estudo.pk])
+        self.tela_url = reverse("resultado_estudo", args=[self.estudo.pk])
+
+    def calcular(self, como=None):
+        self.client.force_login(como or self.responsavel)
+        self.client.post(self.calcular_url)
+        self.estudo.refresh_from_db()
+
+    def test_congelar_nao_aprova_nem_reprova_o_estudo(self):
+        self.calcular()
+
+        self.assertEqual(self.estudo.veredito.resultado, Veredito.PENDENTE)
+        self.assertFalse(self.estudo.veredito.decidido())
+
+    def test_o_calculo_continua_sendo_guardado_como_evidencia(self):
+        # Tirar o veredito automático não é deixar de calcular: a leitura dos
+        # limites continua no retrato, para o responsável decidir olhando para
+        # ela — e para uma auditoria conferir o que ele viu.
+        self.calcular()
+
+        self.assertEqual(self.estudo.veredito.leitura_do_motor(), Veredito.APROVADO)
+
+    def test_a_pessoa_marca_o_veredito_e_fica_registrado_quem_foi(self):
+        self.calcular()
+
+        self.client.post(self.analise_url, {"analise_critica": "", "veredito": "APROVADO"})
+
+        self.estudo.refresh_from_db()
+        veredito = self.estudo.veredito
+        self.assertEqual(veredito.resultado, Veredito.APROVADO)
+        self.assertEqual(veredito.decidido_por, self.responsavel)
+        self.assertIsNotNone(veredito.decidido_em)
+
+    def test_pode_reprovar_um_estudo_que_passou_em_todos_os_limites(self):
+        # É o caso que justifica o veredito manual existir.
+        self.calcular()
+
+        self.client.post(
+            self.analise_url,
+            {"analise_critica": "Reagente com lote em recall.", "veredito": "REPROVADO"},
+        )
+
+        self.estudo.refresh_from_db()
+        self.assertEqual(self.estudo.veredito.resultado, Veredito.REPROVADO)
+        self.assertEqual(self.estudo.veredito.leitura_do_motor(), Veredito.APROVADO)
+        self.assertTrue(self.estudo.veredito.decisao_contraria_ao_calculo())
+
+    def test_decidir_contra_os_limites_sem_justificar_gera_aviso(self):
+        self.calcular()
+
+        resposta = self.client.post(
+            self.analise_url, {"analise_critica": "", "veredito": "REPROVADO"}, follow=True
+        )
+
+        self.assertContains(resposta, "oposto do que os limites apontaram")
+
+    def test_veredito_invalido_e_recusado(self):
+        self.calcular()
+
+        resposta = self.client.post(
+            self.analise_url, {"analise_critica": "", "veredito": "TALVEZ"}, follow=True
+        )
+
+        self.estudo.refresh_from_db()
+        self.assertEqual(self.estudo.veredito.resultado, Veredito.PENDENTE)
+        self.assertContains(resposta, "Marque uma das duas caixas")
+
+    def test_nao_libera_relatorio_sem_veredito_marcado(self):
+        # Sem esta trava o documento assinado sairia dizendo "aguardando a
+        # decisão do responsável" no lugar do veredito.
+        self.calcular()
+
+        resposta = self.client.post(self.liberar_url, follow=True)
+
+        self.estudo.refresh_from_db()
+        self.assertEqual(self.estudo.situacao, Estudo.CONCLUIDO)
+        self.assertContains(resposta, "Marque o veredito antes de liberar")
+
+    def test_recalcular_devolve_o_veredito_para_pendente(self):
+        # A decisão foi tomada sobre os números antigos; recalcular troca os
+        # números. Manter o "aprovado" seria assinar o que ninguém leu.
+        self.calcular()
+        self.client.post(
+            self.analise_url, {"analise_critica": "Tudo certo.", "veredito": "APROVADO"}
+        )
+
+        self.client.post(self.calcular_url)
+
+        self.estudo.refresh_from_db()
+        self.assertEqual(self.estudo.veredito.resultado, Veredito.PENDENTE)
+        self.assertIsNone(self.estudo.veredito.decidido_por)
+        # O texto, ao contrário da decisão, atravessa o recálculo.
+        self.assertEqual(self.estudo.veredito.analise_critica, "Tudo certo.")
+
+    def test_relatorio_liberado_nao_muda_de_veredito(self):
+        self.calcular()
+        self.client.post(self.analise_url, {"analise_critica": "", "veredito": "APROVADO"})
+        self.client.post(self.liberar_url)
+
+        resposta = self.client.post(
+            self.analise_url, {"analise_critica": "", "veredito": "REPROVADO"}, follow=True
+        )
+
+        self.estudo.refresh_from_db()
+        self.assertEqual(self.estudo.veredito.resultado, Veredito.APROVADO)
+        self.assertContains(resposta, "já foi assinado")
+
+    def test_a_decisao_vai_para_a_trilha_de_auditoria(self):
+        self.calcular()
+
+        self.client.post(self.analise_url, {"analise_critica": "", "veredito": "REPROVADO"})
+
+        registro = RegistroAuditoria.objects.filter(acao="decidiu o veredito").first()
+        self.assertIsNotNone(registro)
+        self.assertEqual(registro.usuario, self.responsavel)
+        self.assertEqual(registro.detalhe["veredito"], "REPROVADO")
+        self.assertEqual(registro.detalhe["leitura_do_motor"], "APROVADO")
+        self.assertTrue(registro.detalhe["contraria_o_calculo"])
+
+    def test_a_tela_mostra_as_duas_caixas_e_nao_um_veredito_automatico(self):
+        self.calcular()
+
+        resposta = self.client.get(self.tela_url)
+
+        self.assertContains(resposta, "Estudo Aprovado")
+        self.assertContains(resposta, "Estudo Reprovado")
+        self.assertContains(resposta, "Aguardando a decisão do responsável")
+
+    def test_o_quadro_diz_que_falta_decidir(self):
+        self.calcular()
+
+        resposta = self.client.get(reverse("quadro"))
+
+        self.assertContains(resposta, "A DECIDIR")
+        self.assertContains(resposta, "Decidir o veredito")
+
+
+class TestCarimboDoMotorForaDaVista(TestCase):
+    """A data de congelamento e a versão do motor saíram da tela e do relatório.
+
+    Continuam gravadas — são o que permite rastrear um recálculo divergente
+    depois de uma atualização do sistema — mas não são informação de leitura
+    para o laboratório nem para o cliente que recebe o PDF.
+    """
+
+    def setUp(self):
+        self.laboratorio = montar_laboratorio("Lab A", "11.111.111/0001-11")
+        self.responsavel = Usuario.objects.create_user(
+            username="rt", password="senha-longa-de-teste",
+            laboratorio=self.laboratorio, funcao=Usuario.RESPONSAVEL,
+        )
+        self.estudo = montar_estudo(self.laboratorio, self.responsavel)
+        self.client.force_login(self.responsavel)
+        self.client.post(reverse("concluir_estudo", args=[self.estudo.pk]))
+        self.client.post(
+            reverse("analise_estudo", args=[self.estudo.pk]),
+            {"analise_critica": "Conferido.", "veredito": "APROVADO"},
+        )
+        self.estudo.refresh_from_db()
+
+    def test_a_tela_de_resultado_nao_carimba_o_motor(self):
+        resposta = self.client.get(reverse("resultado_estudo", args=[self.estudo.pk]))
+
+        corpo = resposta.content.decode()
+        self.assertNotIn("Congelado em", corpo)
+        self.assertNotIn("Motor de cálculo", corpo)
+        self.assertNotIn(VERSAO_MOTOR, corpo)
+
+    def test_o_relatorio_nao_carimba_o_motor(self):
+        resposta = self.client.get(reverse("relatorio_estudo", args=[self.estudo.pk]))
+
+        corpo = resposta.content.decode()
+        self.assertNotIn("Congelado em", corpo)
+        self.assertNotIn("Motor de cálculo", corpo)
+        self.assertNotIn("Versão do motor", corpo)
+        self.assertNotIn(VERSAO_MOTOR, corpo)
+
+    def test_a_versao_continua_gravada_para_auditoria(self):
+        self.assertEqual(self.estudo.veredito.versao_motor, VERSAO_MOTOR)
+
+    def test_o_relatorio_traz_o_veredito_depois_da_conclusao(self):
+        resposta = self.client.get(reverse("relatorio_estudo", args=[self.estudo.pk]))
+
+        corpo = resposta.content.decode()
+        conclusao = corpo.index("Conclusão / análise crítica")
+        veredito = corpo.index('<div class="veredito-final">')
+        self.assertLess(conclusao, veredito)
+
+    def test_o_relatorio_diz_quem_decidiu(self):
+        resposta = self.client.get(reverse("relatorio_estudo", args=[self.estudo.pk]))
+
+        self.assertContains(resposta, "Estudo aprovado")
+        self.assertContains(resposta, "Decidido por")
+
+
+class TestLinhaDaExatidao(TestCase):
+    """A linha de exatidão precisa se explicar sozinha.
+
+    Quatro perguntas, sem calculadora: quanto deu e para que lado, contra quais
+    dois números, qual é o teto e se passou.
+    """
+
+    def setUp(self):
+        self.laboratorio = montar_laboratorio("Lab A", "11.111.111/0001-11")
+        self.usuario = Usuario.objects.create_user(
+            username="analista", password="senha-longa-de-teste",
+            laboratorio=self.laboratorio, funcao=Usuario.ANALISTA,
+        )
+        self.estudo = montar_estudo(self.laboratorio, self.usuario)
+        self.nivel = self.estudo.niveis.get(numero=1)
+        self.client.force_login(self.usuario)
+        self.url = reverse("resultado_estudo", args=[self.estudo.pk])
+
+    def test_bias_negativo_aparece_com_sinal_e_com_a_palavra(self):
+        # Réplicas em torno de 1,30 contra um grupo de pares em 1,40.
+        self.nivel.media_interlaboratorial = Decimal("1.4000")
+        self.nivel.provedor_interlaboratorial = "Controllab EQ"
+        self.nivel.save()
+
+        resposta = self.client.get(self.url)
+
+        self.assertContains(resposta, "bias negativo")
+        self.assertNotContains(resposta, "bias positivo")
+        # Sinal de menos tipográfico, o mesmo da conta escrita ao lado — e não
+        # o hífen do teclado, que deixava dois traços diferentes na mesma linha.
+        self.assertContains(resposta, "−6,07%")
+
+    def test_bias_positivo_aparece_com_sinal_e_com_a_palavra(self):
+        self.nivel.media_interlaboratorial = Decimal("1.2000")
+        self.nivel.save()
+
+        resposta = self.client.get(self.url)
+
+        self.assertContains(resposta, "bias positivo")
+        self.assertNotContains(resposta, "bias negativo")
+        self.assertContains(resposta, "+9,58%")
+
+    def test_a_coluna_mostra_os_dois_valores_comparados(self):
+        self.nivel.media_interlaboratorial = Decimal("1.2000")
+        self.nivel.save()
+
+        resposta = self.client.get(self.url)
+
+        self.assertContains(resposta, "Comparação")
+        self.assertNotContains(resposta, "Comparado com")
+        self.assertContains(resposta, "média das réplicas")
+        self.assertContains(resposta, "média interlaboratorial")
+        self.assertContains(resposta, "1.2000")
+
+    def test_mostra_o_limite_e_a_situacao_da_exatidao(self):
+        self.nivel.media_interlaboratorial = Decimal("1.2000")
+        self.nivel.save()
+
+        resposta = self.client.get(self.url)
+
+        self.assertContains(resposta, "bias máximo")
+        self.assertContains(resposta, "estado--REPROVADO")
+
+    def test_sem_limite_de_bias_a_celula_diz_que_falta_e_nao_some(self):
+        # Antes, quando o indicador não existia, a linha perdia duas colunas e
+        # a tabela saía torta — o limite simplesmente sumia da tela.
+        self.nivel.media_interlaboratorial = Decimal("1.2000")
+        self.nivel.save()
+        ficha = self.estudo.especificacao
+        # O bias é derivado do erro total: para não haver limite nenhum, os dois
+        # precisam sair. Zerar só um deixa o outro sustentando a conta.
+        ficha.bias_derivado = False
+        ficha.bias_maximo_pct = None
+        ficha.erro_total_maximo_pct = None
+        ficha.save()
+
+        resposta = self.client.get(self.url)
+
+        self.assertContains(resposta, "sem limite")
+        self.assertContains(resposta, "estado--INDETERMINADO")

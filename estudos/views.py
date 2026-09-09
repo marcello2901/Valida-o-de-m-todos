@@ -13,7 +13,7 @@ from django.views.decorators.http import require_POST
 from catalogo.models import Controle
 
 from . import servicos
-from .models import Estudo, NivelEstudo
+from .models import Estudo, Veredito
 
 
 def _laboratorio_do(request):
@@ -105,38 +105,71 @@ def concluir(request, estudo_id: int):
     except servicos.AcaoRecusada as recusa:
         messages.error(request, str(recusa))
     else:
-        # O tom acompanha o resultado, não o sucesso da operação. Congelar um
-        # REPROVADO em faixa verde de "tudo certo" é sinal trocado: a ação deu
-        # certo, o método é que não passou.
-        recado = (
-            f"Cálculo congelado: {veredito.get_resultado_display()}. "
-            "A partir de agora o relatório imprime este retrato."
+        # A ação congela os números; ela não aprova nem reprova nada. Anunciar
+        # "Cálculo congelado: APROVADO" era o programa dando o veredito na voz
+        # de uma confirmação de operação.
+        messages.success(
+            request,
+            "Cálculo congelado. A partir de agora o relatório imprime este retrato — "
+            "falta marcar o veredito, abaixo da análise crítica.",
         )
-        if veredito.resultado == veredito.APROVADO:
-            messages.success(request, recado)
-        elif veredito.resultado == veredito.INDETERMINADO:
-            messages.warning(request, recado)
-        else:
-            messages.info(request, recado)
+        if veredito.leitura_do_motor() == Veredito.REPROVADO:
+            messages.warning(
+                request,
+                "Atenção: pelo menos um indicador ficou fora do limite especificado. "
+                "A decisão sobre o estudo continua sendo sua.",
+            )
     return redirect("resultado_estudo", estudo_id=estudo.pk)
 
 
 @login_required
 @require_POST
 def analise_critica(request, estudo_id: int):
-    """Grava a conclusão do responsável sobre o estudo."""
+    """Grava a conclusão do responsável e o veredito que ele marcou.
+
+    Os dois vão no mesmo envio de propósito: o veredito é a conclusão da análise
+    crítica, e separá-los em dois botões deixaria o texto salvo com a caixa
+    desmarcada — que é exatamente o estado que trava a liberação depois.
+    """
     estudo = _estudo_do_usuario(request, estudo_id)
+    recados = []
+
     try:
         efeito = servicos.registrar_analise_critica(
             estudo, request.user, request.POST.get("analise_critica", "")
         )
     except servicos.AcaoRecusada as recusa:
         messages.error(request, str(recusa))
+        return redirect("resultado_estudo", estudo_id=estudo.pk)
+
+    if efeito != "sem_mudanca":
+        recados.append(f"análise crítica {efeito}")
+
+    escolha = (request.POST.get("veredito") or "").strip()
+    if escolha:
+        try:
+            decisao = servicos.registrar_veredito(estudo, request.user, escolha)
+        except servicos.AcaoRecusada as recusa:
+            messages.error(request, str(recusa))
+            return redirect("resultado_estudo", estudo_id=estudo.pk)
+        if decisao != "sem_mudanca":
+            veredito = estudo.veredito
+            recados.append(f"veredito {decisao}: {veredito.get_resultado_display().lower()}")
+            # Decidir contra o que os limites apontaram é legítimo — é para isso
+            # que o veredito é humano. Sem justificativa escrita, porém, o
+            # relatório sai afirmando o contrário dos próprios números e sem
+            # dizer por quê, e é isso que uma auditoria pergunta primeiro.
+            if veredito.decisao_contraria_ao_calculo() and not veredito.analise_critica.strip():
+                messages.warning(
+                    request,
+                    "O veredito marcado é o oposto do que os limites apontaram e não há "
+                    "análise crítica escrita. Registre o motivo antes de liberar o relatório.",
+                )
+
+    if recados:
+        messages.success(request, f"Salvo: {' · '.join(recados)}. Tudo na trilha de auditoria.")
     else:
-        if efeito == "sem_mudanca":
-            messages.info(request, "A análise crítica não mudou.")
-        else:
-            messages.success(request, f"Análise crítica {efeito} e registrada na trilha.")
+        messages.info(request, "Nada mudou.")
     return redirect("resultado_estudo", estudo_id=estudo.pk)
 
 
@@ -185,9 +218,7 @@ def relatorio(request, estudo_id: int):
     # Mesma checagem da tela de trabalho: se a ficha do analito mudou depois do
     # congelamento, o relatório diz isso em vez de imprimir números que não
     # batem com o veredito impresso ao lado.
-    contexto["divergencia"] = bool(
-        contexto.get("veredito") and veredito.resultado != contexto["veredito"]["status"]
-    )
+    contexto["divergencia"] = _ficha_mudou(veredito, contexto.get("veredito"))
     return render(request, "estudos/relatorio.html", contexto)
 
 
@@ -241,7 +272,6 @@ def replicas(request, estudo_id: int):
             "colunas": servicos.montar_grade(estudo),
             "andamento": estudo.progresso(),
             "controles_disponiveis": _controles_livres(estudo),
-            "provedores": NivelEstudo.PROVEDORES,
         },
     )
 
@@ -333,7 +363,9 @@ def _salvar_medias_alvo(request, estudo):
     """
     for nivel in estudo.niveis.all():
         bruto = (request.POST.get(f"alvo_{nivel.pk}") or "").strip()
-        provedor = (request.POST.get(f"provedor_{nivel.pk}") or "").strip()
+        # Texto livre, então o tamanho do campo é o teto — o navegador respeita
+        # o maxlength, uma requisição montada à mão não.
+        provedor = (request.POST.get(f"provedor_{nivel.pk}") or "").strip()[:80]
         try:
             alvo = servicos.converter_numero(bruto) if bruto else None
         except (InvalidOperation, ValueError):
@@ -381,10 +413,19 @@ def resultado(request, estudo_id: int):
     # tela de trabalho. Quem imprime o relatório lê o retrato. Mas se os dois
     # discordarem — porque a ficha do analito mudou depois da assinatura — o
     # laboratório precisa saber, em vez de descobrir numa auditoria.
+    #
+    # A comparação é entre a leitura do motor guardada no retrato e a leitura do
+    # motor de agora. O veredito do responsável não entra: ele pode divergir dos
+    # limites de propósito, e isso não é sinal de ficha alterada.
     congelado = getattr(estudo, "veredito", None)
-    contexto["divergencia"] = bool(
-        congelado
-        and contexto.get("veredito")
-        and congelado.resultado != contexto["veredito"]["status"]
-    )
+    contexto["congelado"] = congelado
+    contexto["divergencia"] = _ficha_mudou(congelado, contexto.get("veredito"))
     return render(request, "estudos/resultado.html", contexto)
+
+
+def _ficha_mudou(congelado, ao_vivo) -> bool:
+    """Diz se o recálculo de agora não bate com a leitura congelada do motor."""
+    if congelado is None or not ao_vivo:
+        return False
+    leitura = congelado.leitura_do_motor()
+    return bool(leitura) and leitura != ao_vivo.get("status")

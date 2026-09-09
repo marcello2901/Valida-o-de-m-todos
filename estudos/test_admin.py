@@ -94,3 +94,106 @@ class TestPainelAdministrativo(TestCase):
         pedido = RequestFactory().get("/admin/")
         pedido.user = self.equipe
         return pedido
+
+
+class TestFormularioDoEstudoNoPainel(TestCase):
+    """O cadastro do estudo pede só o que se decide no cadastro.
+
+    A média interlaboratorial e o nome do programa saíram do formulário do
+    estudo: quem os preenche é quem tem o boletim do programa na mão, na hora de
+    digitar as réplicas daquele lote. Aqui ficavam em branco.
+    """
+
+    def setUp(self):
+        self.laboratorio = montar_laboratorio("Lab A", "11.111.111/0001-11")
+        self.suporte = Usuario.objects.create_user(
+            username="suporte", password="senha-longa-de-teste",
+            is_staff=True, is_superuser=True,
+        )
+        self.estudo = montar_estudo(self.laboratorio, self.suporte)
+        self.client.force_login(self.suporte)
+
+    def test_o_nivel_pede_so_numero_e_material(self):
+        from estudos.admin import NivelEstudoInline
+
+        self.assertEqual(NivelEstudoInline.fields, ["numero", "controle"])
+
+    def test_a_tela_do_estudo_nao_pede_concentracao_nem_media(self):
+        resposta = self.client.get(
+            reverse("admin:estudos_estudo_change", args=[self.estudo.pk])
+        )
+
+        corpo = resposta.content.decode()
+        self.assertNotIn("Concentração declarada", corpo)
+        self.assertNotIn("niveis-0-media_interlaboratorial", corpo)
+        self.assertNotIn("niveis-0-provedor_interlaboratorial", corpo)
+        self.assertIn("niveis-0-controle", corpo)
+
+
+class TestExplicacaoDeAcessoNoPainel(TestCase):
+    """O formulário de usuário diz qual mecanismo controla o quê.
+
+    O programa tem dois sistemas de acesso paralelos: a *função* governa as
+    telas do laboratório e o par ``is_staff`` + grupos governa só este painel.
+    Quem monta um grupo com todas as permissões e não marca "membro da equipe"
+    não abre nada — e passa uma tarde procurando o motivo. O formulário precisa
+    dizer isso onde a decisão é tomada.
+    """
+
+    def setUp(self):
+        self.suporte = Usuario.objects.create_user(
+            username="suporte", password="senha-longa-de-teste",
+            is_staff=True, is_superuser=True,
+        )
+        self.client.force_login(self.suporte)
+
+    def test_o_formulario_avisa_que_grupo_sozinho_nao_abre_o_painel(self):
+        resposta = self.client.get(
+            reverse("admin:contas_usuario_change", args=[self.suporte.pk])
+        )
+
+        self.assertContains(resposta, "membro da equipe")
+        self.assertContains(resposta, "nem grupo nem permissão individual")
+
+    def test_o_formulario_diz_que_o_programa_usa_a_funcao(self):
+        resposta = self.client.get(
+            reverse("admin:contas_usuario_change", args=[self.suporte.pk])
+        )
+
+        self.assertContains(resposta, "governadas pela")
+        self.assertContains(resposta, "sem depender de grupo")
+
+    def test_a_lista_mostra_quem_acessa_o_painel(self):
+        resposta = self.client.get(reverse("admin:contas_usuario_changelist"))
+
+        self.assertContains(resposta, "Acessa cadastros")
+
+    def test_permissao_de_grupo_chega_ao_usuario(self):
+        # Guarda o que foi medido: o mecanismo do Django funciona. Se um dia
+        # deixar de funcionar — backend de autenticação trocado, campo groups
+        # redefinido — este teste falha antes de o cliente descobrir.
+        from django.contrib.auth.models import Group, Permission
+
+        permissao = Permission.objects.get(codename="change_estudo")
+        grupo = Group.objects.create(name="Analista")
+        grupo.permissions.add(permissao)
+
+        pessoa = Usuario.objects.create_user(
+            username="alcindo", password="senha-longa-de-teste", is_staff=True
+        )
+        pessoa.groups.add(grupo)
+
+        pessoa = Usuario.objects.get(pk=pessoa.pk)
+        self.assertTrue(pessoa.has_perm("estudos.change_estudo"))
+
+    def test_sem_membro_da_equipe_nem_o_superusuario_entra_no_painel(self):
+        # A trava que confundia: as permissões estão todas lá, e o painel
+        # devolve a tela de login mesmo assim.
+        pessoa = Usuario.objects.create_user(
+            username="sasha", password="senha-longa-de-teste", is_superuser=True
+        )
+        self.client.force_login(pessoa)
+
+        resposta = self.client.get(reverse("admin:index"), follow=True)
+
+        self.assertEqual(resposta.redirect_chain[0][0], "/admin/login/?next=/admin/")
