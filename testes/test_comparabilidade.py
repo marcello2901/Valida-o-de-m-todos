@@ -73,46 +73,6 @@ class TestDeming:
         assert muitas["atende_minimo_ep09"] is True
 
 
-class TestPassingBablok:
-    def test_reta_exata_e_recuperada(self):
-        resultado = comp.passing_bablok([1, 2, 3, 4, 5], [3, 5, 7, 9, 11])
-
-        assert resultado["inclinacao"] == pytest.approx(2.0)
-        assert resultado["intercepto"] == pytest.approx(1.0)
-
-    def test_inclinacao_e_reciproca_ao_inverter_os_eixos(self):
-        # Propriedade do estimador: trocar comparação por teste tem de produzir
-        # a inclinação recíproca. Regressão por mínimos quadrados NÃO tem essa
-        # propriedade — é justamente por isso que ela não serve aqui.
-        x = [10.0, 20.0, 30.0, 40.0, 52.0, 61.0]
-        y = [11.0, 19.0, 32.0, 39.0, 50.0, 63.0]
-
-        direta = comp.passing_bablok(x, y)
-        inversa = comp.passing_bablok(y, x)
-
-        assert direta["inclinacao"] == pytest.approx(
-            1 / inversa["inclinacao"], rel=1e-9
-        )
-
-    def test_resiste_a_valor_discrepante(self):
-        # Um ponto grosseiramente errado desloca pouco a mediana das
-        # inclinações, enquanto arrastaria uma regressão de mínimos quadrados.
-        x = [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0]
-        y_limpo = [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0]
-        y_com_erro = [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 700.0]
-
-        limpo = comp.passing_bablok(x, y_limpo)
-        sujo = comp.passing_bablok(x, y_com_erro)
-
-        assert limpo["inclinacao"] == pytest.approx(1.0)
-        assert sujo["inclinacao"] == pytest.approx(1.0)
-
-    def test_poucas_amostras_nao_geram_reta(self):
-        resultado = comp.passing_bablok([1, 2], [2, 4])
-
-        assert resultado["inclinacao"] is None
-
-
 class TestBlandAltman:
     def test_vies_medio_e_limites(self):
         # Diferenças (teste − comparação): 2, 2, 2, 2 → viés 2, DP 0

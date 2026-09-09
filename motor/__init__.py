@@ -9,7 +9,7 @@ Módulos:
 
 - ``estatistica``      — utilitários de base (média, DP, mediana, Wilson)
 - ``precisao``         — CLSI EP15: repetibilidade e precisão intermediária
-- ``comparabilidade``  — CLSI EP09: Deming, Passing-Bablok, Bland-Altman, bias
+- ``comparabilidade``  — CLSI EP09: Deming, Bland-Altman, razão das médias, bias
 - ``qualitativo``      — CLSI EP12: tabela 2×2, sensibilidade, kappa
 - ``especificacoes``   — EQA: limites de aceitação e suas referências
 - ``concordancia``     — Lin, concordância analítica e concordância clínica

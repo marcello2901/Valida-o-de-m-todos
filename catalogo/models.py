@@ -99,12 +99,6 @@ class SistemaAnalitico(models.Model):
     equipamento = models.CharField("equipamento", max_length=120, help_text="Ex.: Atellica")
     numero_serie = models.CharField("número de série", max_length=60, help_text="Ex.: IH00715")
     metodologia = models.CharField("metodologia", max_length=120, help_text="Ex.: Quimioluminescência")
-    intervalo_analitico_minimo = models.DecimalField(
-        "intervalo analítico — mínimo", max_digits=14, decimal_places=4, null=True, blank=True
-    )
-    intervalo_analitico_maximo = models.DecimalField(
-        "intervalo analítico — máximo", max_digits=14, decimal_places=4, null=True, blank=True
-    )
     ativo = models.BooleanField("ativo", default=True)
 
     class Meta:
@@ -117,14 +111,6 @@ class SistemaAnalitico(models.Model):
 
     def papel_curto(self) -> str:
         return self._PAPEL_CURTO.get(self.papel, self.papel)
-
-    def clean(self):
-        minimo = self.intervalo_analitico_minimo
-        maximo = self.intervalo_analitico_maximo
-        if minimo is not None and maximo is not None and minimo >= maximo:
-            raise ValidationError(
-                {"intervalo_analitico_maximo": "O máximo do intervalo analítico deve ser maior que o mínimo."}
-            )
 
 
 class InsumoRastreavel(models.Model):
@@ -151,13 +137,78 @@ class InsumoRastreavel(models.Model):
 
 
 class Reagente(InsumoRastreavel):
+    """Kit de reagente de um analito num sistema analítico.
+
+    O intervalo analítico mora aqui, e não no equipamento, porque é propriedade
+    do ensaio: o mesmo analisador roda dezenas de testes, cada um com a sua
+    faixa de medição declarada na bula. Guardar "0,1 a 12" no equipamento dizia,
+    na prática, que a Atellica inteira mede de 0,1 a 12 — o que não significa
+    nada. Trocar o lote pode mudar a faixa, e é o lote que o relatório precisa
+    citar.
+    """
+
     sistema = models.ForeignKey(
         SistemaAnalitico, verbose_name="sistema analítico", on_delete=models.CASCADE, related_name="reagentes"
+    )
+    mensurando = models.ForeignKey(
+        "catalogo.Mensurando", verbose_name="mensurando", on_delete=models.PROTECT,
+        related_name="reagentes", null=True, blank=True,
+        help_text="Analito que este kit mede. É o que dá sentido ao intervalo analítico.",
+    )
+    intervalo_analitico_minimo = models.DecimalField(
+        "intervalo analítico — mínimo", max_digits=14, decimal_places=4, null=True, blank=True,
+        help_text="Menor valor que o ensaio mede, conforme a bula do lote.",
+    )
+    intervalo_analitico_maximo = models.DecimalField(
+        "intervalo analítico — máximo", max_digits=14, decimal_places=4, null=True, blank=True,
     )
 
     class Meta(InsumoRastreavel.Meta):
         verbose_name = "reagente"
         verbose_name_plural = "reagentes"
+
+    def clean(self):
+        minimo = self.intervalo_analitico_minimo
+        maximo = self.intervalo_analitico_maximo
+        if minimo is not None and maximo is not None and minimo >= maximo:
+            raise ValidationError(
+                {"intervalo_analitico_maximo": "O máximo do intervalo analítico deve ser maior que o mínimo."}
+            )
+
+    def tem_intervalo(self) -> bool:
+        return (
+            self.intervalo_analitico_minimo is not None
+            and self.intervalo_analitico_maximo is not None
+        )
+
+    @staticmethod
+    def _sem_zeros(valor) -> str:
+        """0,1000 vira 0,1 — e com vírgula, que é como se lê no Brasil.
+
+        ``:.4g`` num Decimal não corta os zeros à direita como corta num float:
+        devolvia "0.1000 a 12.00", que ninguém escreve numa bula.
+        """
+        texto = format(valor.normalize(), "f")
+        return texto.replace(".", ",")
+
+    def intervalo_escrito(self) -> str:
+        if not self.tem_intervalo():
+            return ""
+        return (
+            f"{self._sem_zeros(self.intervalo_analitico_minimo)} a "
+            f"{self._sem_zeros(self.intervalo_analitico_maximo)}"
+        )
+
+    @classmethod
+    def do_estudo(cls, sistema, mensurando):
+        """Reagentes elegíveis: mesmo sistema, mesmo analito.
+
+        Um reagente sem mensurando declarado continua elegível — é cadastro
+        antigo, e escondê-lo tiraria da vista material que o laboratório usa.
+        """
+        return cls.objects.filter(sistema=sistema).filter(
+            models.Q(mensurando=mensurando) | models.Q(mensurando__isnull=True)
+        )
 
 
 class Calibrador(InsumoRastreavel):

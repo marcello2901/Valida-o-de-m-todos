@@ -1,0 +1,397 @@
+{% extends "base.html" %}
+
+{% comment %}
+  Relatório de validação, feito para sair em papel.
+
+  Não usa o trilho nem as faixas condensáveis: um documento impresso não tem
+  para onde navegar e não pode ter seção fechada. A ordem é a de um relatório de
+  qualidade — identificação, rastreabilidade, resultados, conclusão, assinatura
+  — e não a da tela de trabalho.
+
+  O PDF sai pela caixa de impressão do navegador. É o que dispensa biblioteca de
+  PDF no servidor, com as dependências de sistema que ela arrasta, e o que faz o
+  arquivo sair igual em qualquer máquina.
+{% endcomment %}
+
+{% block titulo %}Relatório — {{ estudo.identificacao }}{% endblock %}
+
+{% block navegacao %}{% endblock %}
+
+{% block estilo %}
+<style>
+  .aplicacao { display: block; }
+  .folha {
+    max-width: 900px; margin: 0 auto; padding: 26px 30px 60px;
+    background: var(--superficie); color: var(--tinta);
+  }
+
+  .comandos {
+    max-width: 900px; margin: 0 auto; padding: 14px 30px 0;
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  }
+
+  .timbre { display: flex; align-items: start; gap: 14px; padding-bottom: 14px; border-bottom: 2px solid var(--tinta); }
+  .timbre .marca {
+    width: 40px; height: 40px; border-radius: 10px; background: var(--tinta); color: var(--superficie);
+    display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 17px; flex-shrink: 0;
+    font-family: "Instrument Sans", system-ui, sans-serif;
+  }
+  .timbre h1 { font-size: 18px; font-weight: 600; margin: 0; }
+  .timbre .sub { font-size: 12px; color: var(--tinta-2); margin: 2px 0 0; }
+
+  .bloco { margin-top: 20px; break-inside: avoid; }
+  .bloco > h2 {
+    font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em;
+    color: var(--tinta-2); margin: 0 0 8px; padding-bottom: 5px; border-bottom: 1px solid var(--linha);
+  }
+  .bloco h3 { font-size: 13px; font-weight: 600; margin: 14px 0 6px; }
+
+  .par-a-par { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 22px; }
+  .par-a-par > div { display: flex; gap: 8px; font-size: 12.5px; padding: 2px 0; }
+  .par-a-par dt { color: var(--tinta-3); min-width: 150px; flex-shrink: 0; }
+  .par-a-par dd { margin: 0; font-weight: 600; }
+
+  table { font-size: 12px; }
+  th, td { padding: 5px 8px; }
+
+  .veredito-final {
+    margin-top: 20px; padding: 14px 16px; border: 2px solid var(--tinta);
+    border-radius: 8px; display: flex; align-items: center; gap: 14px; break-inside: avoid;
+  }
+  .veredito-final .palavra {
+    font-size: 19px; font-weight: 700; font-family: "Instrument Sans", system-ui, sans-serif;
+  }
+
+  .conclusao {
+    margin-top: 8px; padding: 13px 15px; border: 1px solid var(--linha); border-radius: 8px;
+    background: var(--faixa); font-size: 12.5px; line-height: 1.6; white-space: pre-wrap;
+  }
+
+  .assinatura { margin-top: 34px; display: grid; grid-template-columns: repeat(2, 1fr); gap: 30px; break-inside: avoid; }
+  .assinatura .linha-firma { border-top: 1px solid var(--tinta); padding-top: 6px; font-size: 11.5px; color: var(--tinta-2); }
+
+  .rodape-doc {
+    margin-top: 26px; padding-top: 12px; border-top: 1px solid var(--linha);
+    font-size: 10.5px; color: var(--tinta-3); line-height: 1.55;
+  }
+
+  .grafico { margin: 10px 0; break-inside: avoid; }
+  .grafico svg { max-width: 100%; height: auto; }
+
+  @media print {
+    @page { size: A4; margin: 14mm 12mm 16mm; }
+    body { background: #fff; }
+    .comandos, .recados { display: none !important; }
+    .folha { max-width: none; margin: 0; padding: 0; box-shadow: none; }
+    .bloco { break-inside: avoid; }
+    a { color: inherit; text-decoration: none; }
+  }
+</style>
+{% endblock %}
+
+{% block corpo %}
+<div class="comandos">
+  <a href="{% url 'resultado_estudo' estudo.pk %}" class="botao">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 6l-6 6 6 6"/></svg>
+    Voltar ao estudo
+  </a>
+  <div class="cresce"></div>
+  <button type="button" class="botao botao--primario" onclick="window.print()">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V3h12v6"/><rect x="3" y="9" width="18" height="8" rx="2"/><path d="M7 17h10v4H7z"/></svg>
+    Gerar PDF
+  </button>
+  <span class="nota">Escolha “Salvar como PDF” no destino da impressão.</span>
+</div>
+
+<div class="folha">
+
+  <div class="timbre">
+    <span class="marca">V</span>
+    <div style="flex-grow: 1">
+      <h1 class="display">Relatório de validação de método analítico</h1>
+      <p class="sub">
+        {{ estudo.laboratorio.nome_fantasia|default:estudo.laboratorio.razao_social }}
+        &middot; CNPJ {{ estudo.laboratorio.cnpj }}
+        {% if estudo.laboratorio.cidade %} &middot; {{ estudo.laboratorio.cidade }}{% if estudo.laboratorio.uf %}/{{ estudo.laboratorio.uf }}{% endif %}{% endif %}
+      </p>
+    </div>
+    <div style="text-align: right; font-size: 11px; color: var(--tinta-3)">
+      Emitido em {{ emitido_em|date:"d/m/Y H:i" }}<br>
+      por {{ emitido_por.get_full_name|default:emitido_por.username }}
+    </div>
+  </div>
+
+  {% if divergencia %}
+  <div class="aviso" style="margin-top: 16px">
+    <strong>Atenção:</strong> o recálculo feito para esta impressão não coincide com o
+    veredito congelado. O veredito assinado diz <strong>{{ congelado.resultado }}</strong> e o
+    recálculo dá <strong>{{ veredito.status }}</strong> — sinal de que a ficha do analito mudou
+    depois do congelamento. Recalcule o estudo antes de emitir o relatório.
+  </div>
+  {% endif %}
+
+  <div class="bloco">
+    <h2>Identificação do estudo</h2>
+    <dl class="par-a-par">
+      <div><dt>Identificação</dt><dd>{{ estudo.identificacao }}</dd></div>
+      <div><dt>Mensurando</dt><dd>{{ estudo.mensurando.nome }} ({{ estudo.mensurando.unidade_medida }})</dd></div>
+      <div><dt>Material biológico</dt><dd>{{ estudo.mensurando.material_biologico }}</dd></div>
+      <div><dt>Módulo</dt><dd>{{ estudo.modulo_curto }}</dd></div>
+      <div><dt>Desenho da precisão</dt><dd>{{ estudo.get_desenho_precisao_display }}</dd></div>
+      <div><dt>Período</dt><dd>{{ estudo.data_inicio|date:"d/m/Y" }}{% if estudo.data_conclusao %} a {{ estudo.data_conclusao|date:"d/m/Y" }}{% endif %}</dd></div>
+      <div><dt>Cálculo congelado em</dt><dd>{{ congelado.calculado_em|date:"d/m/Y H:i" }}</dd></div>
+      <div><dt>Versão do motor</dt><dd>{{ congelado.versao_motor }}</dd></div>
+    </dl>
+  </div>
+
+  <div class="bloco">
+    <h2>Especificação da qualidade analítica</h2>
+    <table>
+      <tr><th>Limite</th><th class="n">Valor</th><th>Referência científica</th></tr>
+      <tr>
+        <td>Erro total máximo</td>
+        <td class="n">{{ estudo.especificacao.erro_total_maximo_pct|default_if_none:"—" }}%</td>
+        <td>{{ estudo.especificacao.erro_total_referencia|default:"—" }}</td>
+      </tr>
+      <tr>
+        <td>Bias máximo</td>
+        <td class="n">{{ estudo.especificacao.bias_maximo_pct|default_if_none:"—" }}%</td>
+        <td>{{ estudo.especificacao.bias_referencia|default:"—" }}</td>
+      </tr>
+      {% for limite in estudo.especificacao.limites_imprecisao.all %}
+      <tr>
+        <td>Imprecisão máxima — nível {{ limite.nivel }}</td>
+        <td class="n">{{ limite.maximo_pct }}%</td>
+        <td>{{ limite.referencia|default:"—" }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    <p class="nota" style="margin-top: 7px">
+      Nível de significância adotado: α = {{ estudo.especificacao.nivel_significancia }}.
+    </p>
+  </div>
+
+  <div class="bloco">
+    <h2>Rastreabilidade</h2>
+    <dl class="par-a-par">
+      <div><dt>Sistema em teste</dt><dd>{{ estudo.sistema_teste.equipamento }} — nº {{ estudo.sistema_teste.numero_serie }}</dd></div>
+      <div><dt>Metodologia</dt><dd>{{ estudo.sistema_teste.metodologia }}</dd></div>
+      {% if estudo.sistema_comparacao %}
+      <div><dt>Sistema de comparação</dt><dd>{{ estudo.sistema_comparacao.equipamento }} — nº {{ estudo.sistema_comparacao.numero_serie }}</dd></div>
+      <div><dt>Metodologia</dt><dd>{{ estudo.sistema_comparacao.metodologia }}</dd></div>
+      {% endif %}
+      {% if reagentes.teste.tem_intervalo %}
+      <div><dt>Intervalo analítico (teste)</dt><dd>{{ reagentes.teste.intervalo_escrito }} — lote {{ reagentes.teste.lote }}</dd></div>
+      {% endif %}
+      {% if reagentes.comparacao.tem_intervalo %}
+      <div><dt>Intervalo analítico (comparação)</dt><dd>{{ reagentes.comparacao.intervalo_escrito }} — lote {{ reagentes.comparacao.lote }}</dd></div>
+      {% endif %}
+    </dl>
+
+    <h3>Insumos</h3>
+    <table>
+      <tr><th>Item</th><th>Nome</th><th>Lote</th><th class="n">Validade</th></tr>
+      {% for reagente in estudo.sistema_teste.reagentes.all %}
+      <tr><td>Reagente</td><td>{{ reagente.nome }}</td><td>{{ reagente.lote }}</td><td class="n">{{ reagente.validade|date:"d/m/Y" }}</td></tr>
+      {% endfor %}
+      {% for calibrador in estudo.sistema_teste.calibradores.all %}
+      <tr><td>Calibrador</td><td>{{ calibrador.nome }}</td><td>{{ calibrador.lote }}</td><td class="n">{{ calibrador.validade|date:"d/m/Y" }}</td></tr>
+      {% endfor %}
+      {% for item in precisao %}
+      <tr>
+        <td>Controle nível {{ item.numero }}</td>
+        <td>{{ item.nivel.controle.nome }}</td>
+        <td>{{ item.nivel.controle.lote }}</td>
+        <td class="n">{{ item.nivel.controle.validade|date:"d/m/Y" }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+
+  {% if precisao %}
+  <div class="bloco">
+    <h2>Precisão e exatidão</h2>
+    {% for item in precisao %}
+    <h3>
+      Nível {{ item.numero }} — {{ item.nivel.controle.nome }} (lote {{ item.nivel.controle.lote }})
+    </h3>
+    <table style="margin-bottom: 8px">
+      <tr><th>Corrida</th><th class="n">n</th><th class="n">Média intracorrida</th><th class="n">Desvio padrão</th><th class="n">CV</th></tr>
+      {% for corrida in item.estatistica.corridas %}
+      <tr>
+        <td>{{ corrida.corrida }}</td><td class="n">{{ corrida.n }}</td>
+        <td class="n">{{ corrida.media|floatformat:3|default:"—" }}</td>
+        <td class="n">{{ corrida.desvio_padrao|floatformat:4|default:"—" }}</td>
+        <td class="n">{{ corrida.cv|floatformat:2|default:"—" }}%</td>
+      </tr>
+      {% endfor %}
+      <tr style="background: var(--faixa)">
+        <td><strong>Global</strong></td><td class="n"><strong>{{ item.estatistica.n_total }}</strong></td>
+        <td class="n"><strong>{{ item.estatistica.media|floatformat:3|default:"—" }}</strong></td>
+        <td class="n"><strong>{{ item.estatistica.desvio_padrao|floatformat:4|default:"—" }}</strong></td>
+        <td class="n"><strong>{{ item.estatistica.cv|floatformat:2|default:"—" }}%</strong></td>
+      </tr>
+    </table>
+    <table>
+      <tr><th>Avaliação</th><th class="n">Obtido</th><th class="n">Comparado com</th><th class="n">Limite</th><th>Situação</th></tr>
+      {% for indicador in item.avaliacao.indicadores %}{% if indicador.indicador == "imprecisão" %}
+      <tr>
+        <td>Precisão — {{ item.estatistica.tipo_cv_aplicavel|default:"CV" }}</td>
+        <td class="n">{{ item.estatistica.cv|floatformat:2|default:"—" }}%</td>
+        <td class="n">—</td>
+        <td class="n">{{ indicador.limite_pct|floatformat:2|default:"—" }}%</td>
+        <td>{{ indicador.status }}</td>
+      </tr>
+      {% endif %}{% endfor %}
+      {% if item.bias.avaliavel %}
+      <tr>
+        <td>
+          Exatidão — média das réplicas vs. interlaboratorial
+          {% if item.origem_do_alvo %}<div class="nota">{{ item.origem_do_alvo }}</div>{% endif %}
+        </td>
+        <td class="n">{{ item.bias.relativo_pct|floatformat:2 }}%</td>
+        <td class="n">{{ item.bias.media_alvo|floatformat:4 }}</td>
+        {% for indicador in item.avaliacao.indicadores %}{% if indicador.indicador == "bias" %}
+        <td class="n">{{ indicador.limite_pct|floatformat:2|default:"—" }}%</td>
+        <td>{{ indicador.status }}</td>
+        {% endif %}{% endfor %}
+      </tr>
+      {% else %}
+      <tr><td>Exatidão</td><td colspan="4">Não avaliada — média interlaboratorial não informada.</td></tr>
+      {% endif %}
+    </table>
+    {% endfor %}
+
+    {% for grafico in graficos.levey_jennings %}
+    <div class="grafico">{{ grafico.svg|safe }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if comparabilidade.tem_dados %}
+  {% with c=comparabilidade %}
+  <div class="bloco">
+    <h2>Comparabilidade — {{ c.n }} amostras pareadas</h2>
+    <table>
+      <tr><th>Medida</th><th class="n">Resultado</th><th>Leitura</th></tr>
+      <tr>
+        <td>Razão das médias{% if c.razao_avaliacao.status %} — <strong>{{ c.razao_avaliacao.status }}</strong>{% endif %}</td>
+        <td class="n"><strong>{{ c.razao_das_medias.desvio_pct|floatformat:2|default:"—" }}%</strong></td>
+        <td>
+          Razão das médias, valor a ser comparado com
+          {% if c.bias_maximo_pct %}<strong>[Bias máximo {{ c.bias_maximo_pct|floatformat:2 }}%]</strong>{% else %}<strong>[bias máximo não definido]</strong>{% endif %}
+        </td>
+      </tr>
+      <tr>
+        <td>Regressão de Deming</td>
+        <td class="n">y = {{ c.deming.inclinacao|floatformat:4|default:"—" }}x {% if c.deming.intercepto >= 0 %}+{% endif %} {{ c.deming.intercepto|floatformat:4|default:"—" }}</td>
+        <td>admite erro nos dois eixos</td>
+      </tr>
+      <tr>
+        <td>Regressão linear simples</td>
+        <td class="n">y = {{ c.regressao.inclinacao|floatformat:4|default:"—" }}x {% if c.regressao.intercepto >= 0 %}+{% endif %} {{ c.regressao.intercepto|floatformat:4|default:"—" }}</td>
+        <td>mínimos quadrados — a reta do gráfico</td>
+      </tr>
+      <tr>
+        <td>Correlação de Pearson</td>
+        <td class="n">r = {{ c.regressao.r|floatformat:4|default:"—" }} · r² = {{ c.regressao.r2|floatformat:4|default:"—" }}</td>
+        <td>amplitude da faixa estudada — não mede concordância</td>
+      </tr>
+      <tr>
+        <td>Concordância de Lin (ρc)</td>
+        <td class="n">{{ c.lin.ccc|floatformat:4|default:"—" }}</td>
+        <td>{{ c.lin.classificacao }}</td>
+      </tr>
+      <tr>
+        <td>Concordância analítica</td>
+        <td class="n">{{ c.analitica.concordancia_pct|floatformat:1|default:"—" }}%</td>
+        <td>{{ c.analitica.dentro_do_limite }} de {{ c.analitica.avaliadas }} dentro do erro total permitido</td>
+      </tr>
+      <tr>
+        <td>Concordância clínica</td>
+        <td class="n">{{ c.clinica.concordancia_pct|floatformat:1|default:"—" }}%</td>
+        <td>
+          {% if c.clinica.observacao %}{{ c.clinica.observacao|capfirst }}{% else %}
+            {{ c.clinica.concordantes }} de {{ c.clinica.n }} com a mesma interpretação
+            {% if c.clinica.intervalo_comparacao %}(comparação {{ c.clinica.intervalo_comparacao.0|floatformat:"-3" }}–{{ c.clinica.intervalo_comparacao.1|floatformat:"-3" }}{% if c.clinica.intervalos_diferentes %}, teste {{ c.clinica.intervalo_teste.0|floatformat:"-3" }}–{{ c.clinica.intervalo_teste.1|floatformat:"-3" }}{% endif %}){% endif %}
+          {% endif %}
+        </td>
+      </tr>
+    </table>
+    {% if graficos.regressao %}<div class="grafico">{{ graficos.regressao|safe }}</div>{% endif %}
+    {% if graficos.bland_altman %}<div class="grafico">{{ graficos.bland_altman|safe }}</div>{% endif %}
+  </div>
+  {% endwith %}
+  {% endif %}
+
+  {% if avisos %}
+  <div class="bloco">
+    <h2>Ressalvas</h2>
+    <ul style="font-size: 12px; line-height: 1.6; padding-left: 18px; list-style: disc">
+      {% for aviso in avisos %}<li>{{ aviso }}</li>{% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+
+  <div class="veredito-final">
+    <div>
+      <div class="rotulo" style="font-size: 10px; color: var(--tinta-3); text-transform: uppercase; letter-spacing: .06em">Veredito</div>
+      <div class="palavra">{{ congelado.get_resultado_display }}</div>
+    </div>
+    <div class="cresce"></div>
+    <div style="text-align: right; font-size: 11.5px; color: var(--tinta-2)">
+      Congelado em {{ congelado.calculado_em|date:"d/m/Y H:i" }}<br>
+      Motor de cálculo versão {{ congelado.versao_motor }}
+    </div>
+  </div>
+
+  <div class="bloco">
+    <h2>Conclusão / análise crítica</h2>
+    {% if congelado.analise_critica %}
+    <div class="conclusao">{{ congelado.analise_critica }}</div>
+    {% if congelado.analise_editada_apos_liberacao %}
+    <p class="nota" style="margin-top: 6px">
+      Texto editado em {{ congelado.analise_atualizada_em|date:"d/m/Y H:i" }}, posterior à
+      liberação de {{ congelado.liberado_em|date:"d/m/Y" }}.
+    </p>
+    {% endif %}
+    {% else %}
+    <div class="conclusao" style="color: var(--tinta-3); font-style: italic">
+      Nenhuma conclusão registrada. A análise crítica é escrita na tela do estudo e
+      acompanha este relatório.
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="assinatura">
+    <div>
+      <div style="height: 44px"></div>
+      <div class="linha-firma">
+        {% if congelado.liberado_por %}
+          {{ congelado.liberado_por.get_full_name|default:congelado.liberado_por.username }}
+          {% if congelado.liberado_por.conselho_profissional %}<br>{{ congelado.liberado_por.conselho_profissional }}{% endif %}
+          <br>Liberado em {{ congelado.liberado_em|date:"d/m/Y" }}
+        {% else %}
+          Responsável técnico &mdash; {{ estudo.laboratorio.responsavel_tecnico|default:"a definir" }}
+          <br><em>Relatório ainda não liberado</em>
+        {% endif %}
+      </div>
+    </div>
+    <div>
+      <div style="height: 44px"></div>
+      <div class="linha-firma">
+        {{ estudo.criado_por.get_full_name|default:estudo.criado_por.username|default:"Analista responsável pela execução" }}
+        <br>Execução do estudo
+      </div>
+    </div>
+  </div>
+
+  <div class="rodape-doc">
+    Procedimentos conforme descritos em CLSI EP15 (precisão), EP09 (comparação de métodos) e
+    EP12 (métodos qualitativos). Este sistema não é certificado nem endossado pelo CLSI; a
+    responsabilidade pela validação e por sua interpretação permanece do laboratório e de seu
+    responsável técnico. Os cálculos foram executados sobre os dados brutos registrados no
+    sistema, congelados na data indicada junto do veredito.
+  </div>
+</div>
+{% endblock %}

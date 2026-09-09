@@ -124,13 +124,6 @@
 
         <div class="pares">
           <div><dt>Papel</dt><dd>{{ bloco.sistema.papel_curto }}</dd></div>
-          <div><dt>Faixa analítica</dt>
-            <dd>
-              {% if bloco.sistema.intervalo_analitico_minimo is not None %}
-                {{ bloco.sistema.intervalo_analitico_minimo|floatformat:2 }} – {{ bloco.sistema.intervalo_analitico_maximo|floatformat:2 }}
-              {% else %}—{% endif %}
-            </dd>
-          </div>
           <div><dt>Validações</dt><dd class="num">{{ bloco.estudos }}</dd></div>
         </div>
 
@@ -143,7 +136,14 @@
           {% for item in bloco.insumos|slice:":4" %}
           <div class="item">
             <span class="rotulo">{{ item.tipo }}</span>
-            <span class="nome" title="{{ item.insumo.nome }} — lote {{ item.insumo.lote }}">{{ item.insumo.nome }}</span>
+            <span class="nome" title="{{ item.insumo.nome }} — lote {{ item.insumo.lote }}{% if item.intervalo %} — mede de {{ item.intervalo }}{% endif %}">
+              {{ item.insumo.nome }}{% if item.analito %} <span style="color: var(--tinta-3)">· {{ item.analito.nome }}</span>{% endif %}
+            </span>
+            {% comment %}
+              A faixa de medição é do ensaio, não do equipamento: aparece na
+              linha do reagente que a declara, e não no cartão da máquina.
+            {% endcomment %}
+            {% if item.intervalo %}<span class="nota" style="flex-shrink: 0">{{ item.intervalo }}</span>{% endif %}
             <span class="estado estado--{{ item.situacao.chave }}" style="border: none; padding: 0">{{ item.situacao.texto }}</span>
           </div>
           {% endfor %}

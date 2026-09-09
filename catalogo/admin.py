@@ -43,7 +43,10 @@ class MensurandoAdmin(admin.ModelAdmin):
 class ReagenteInline(admin.TabularInline):
     model = Reagente
     extra = 1
-    fields = ["nome", "lote", "validade"]
+    fields = [
+        "nome", "mensurando", "lote", "validade",
+        "intervalo_analitico_minimo", "intervalo_analitico_maximo",
+    ]
 
 
 class CalibradorInline(admin.TabularInline):
@@ -68,13 +71,6 @@ class SistemaAnaliticoAdmin(admin.ModelAdmin):
     fieldsets = [
         ("Identificação", {"fields": ["laboratorio", "papel", "ativo"]}),
         ("Equipamento", {"fields": ["equipamento", "numero_serie", "metodologia"]}),
-        (
-            "Intervalo analítico",
-            {
-                "fields": ["intervalo_analitico_minimo", "intervalo_analitico_maximo"],
-                "description": "Faixa em que o sistema produz resultado confiável.",
-            },
-        ),
     ]
 
 

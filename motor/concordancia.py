@@ -109,20 +109,25 @@ def classificar_ccc(ccc: float | None) -> str:
     return "quase perfeita (ρc ≥ 0,99)"
 
 
-def erro_sistematico_medio(comparacao: Sequence[float], teste: Sequence[float]) -> dict:
-    """Erro sistemático médio entre os métodos, em unidades e em percentual.
+def razao_das_medias(comparacao: Sequence[float], teste: Sequence[float]) -> dict:
+    """Razão entre a média do método em teste e a do método de comparação.
 
-    Duas formas de resumir o mesmo conjunto de diferenças, e elas não coincidem:
+    É o erro sistemático do conjunto, resumido num número só, e é ele que se
+    compara com o bias máximo do analito. ``desvio_pct`` é o que entra nessa
+    comparação: a razão traduzida em quanto o método novo lê acima ou abaixo do
+    antigo, em percentual.
 
-    - **Média das diferenças percentuais**: cada amostra pesa igual. É a leitura
-      correta quando a especificação de qualidade é percentual, porque preserva
-      o peso das concentrações baixas.
-    - **Diferença média sobre a média do comparador**: as concentrações altas
-      dominam. É o número que costuma sair menor, e por isso o mais tentador de
-      reportar.
+        razão 1,0668  →  desvio +6,68%  →  compara com bias máximo 6,00%
 
-    O relatório apresenta os dois; esconder a divergência entre eles seria
-    escolher o número mais favorável sem dizer.
+    A razão bruta também vai no resultado, porque é o número que o laboratório
+    reconhece do relatório do fabricante. Mas ela não se compara com nada: 1,0668
+    ao lado de um limite de 6% não quer dizer coisa alguma.
+
+    Há uma leitura alternativa — a média das diferenças percentuais amostra a
+    amostra — que dá peso igual a cada concentração e costuma sair maior quando
+    o viés é proporcional. Ela segue calculada em ``media_das_diferencas_pct``,
+    porque a divergência entre as duas é informação, não ruído: quando elas se
+    afastam muito, o erro depende da concentração e a razão sozinha esconde isso.
     """
     pares = est.parear(comparacao, teste)
     n = len(pares)
@@ -130,29 +135,34 @@ def erro_sistematico_medio(comparacao: Sequence[float], teste: Sequence[float]) 
     if n == 0:
         return {
             "n": 0,
-            "erro_medio": None,
-            "erro_medio_pct": None,
-            "erro_medio_pct_ponderado": None,
+            "media_comparacao": None,
+            "media_teste": None,
+            "razao": None,
+            "desvio_pct": None,
+            "media_das_diferencas_pct": None,
+            "diferenca_media": None,
             "desvio_padrao": None,
         }
 
+    media_comparacao = sum(x for x, _ in pares) / n
+    media_teste = sum(y for _, y in pares) / n
     diferencas = [y - x for x, y in pares]
-    erro_medio = sum(diferencas) / n
+
+    razao = media_teste / media_comparacao if media_comparacao != 0 else None
+    desvio_pct = (razao - 1) * 100 if razao is not None else None
 
     percentuais = [((y - x) / x) * 100 for x, y in pares if x != 0]
-    erro_medio_pct = sum(percentuais) / len(percentuais) if percentuais else None
-
-    media_comparacao = sum(x for x, _ in pares) / n
-    ponderado = (erro_medio / media_comparacao) * 100 if media_comparacao != 0 else None
 
     return {
         "n": n,
-        "erro_medio": erro_medio,
-        "erro_medio_pct": erro_medio_pct,
-        "erro_medio_pct_ponderado": ponderado,
+        "media_comparacao": media_comparacao,
+        "media_teste": media_teste,
+        "razao": razao,
+        "desvio_pct": desvio_pct,
+        "media_das_diferencas_pct": (sum(percentuais) / len(percentuais)) if percentuais else None,
+        "diferenca_media": sum(diferencas) / n,
         "desvio_padrao": est.desvio_padrao(diferencas),
     }
-
 
 def concordancia_analitica(
     comparacao: Sequence[float],
