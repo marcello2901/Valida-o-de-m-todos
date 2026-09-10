@@ -41,12 +41,23 @@ def montar_especificacao(especificacao) -> espec.EspecificacaoQualidade:
     return especificacao.para_o_motor()
 
 
-def _pares_de_comparacao(estudo):
-    """Amostras pareadas não excluídas, na ordem de cadastro."""
+def _pares_de_comparacao(estudo, faixa=None):
+    """Amostras pareadas não excluídas, na ordem de cadastro.
+
+    ``faixa`` é um par ``(mínimo, máximo)`` de concentração no sistema de
+    comparação. Com ele, só entram as amostras dentro da faixa — é o que
+    sustenta o recorte da regressão, e a filtragem acontece **aqui**, para o
+    recorte percorrer exatamente o mesmo cálculo do estudo inteiro.
+    """
     # Ordem de cadastro, não alfabética: é a ordem em que a grade mostra e em
     # que o laboratório digitou. Com códigos repetidos a ordem alfabética é
     # indefinida entre iguais, e as linhas trocavam de lugar entre telas.
     amostras = estudo.amostras_comparacao.filter(excluida=False).order_by("pk")
+    if faixa is not None:
+        minimo, maximo = faixa
+        amostras = [
+            a for a in amostras if minimo <= float(a.valor_comparacao) <= maximo
+        ]
     return (
         [float(a.valor_comparacao) for a in amostras],
         [float(a.valor_teste) for a in amostras],
@@ -54,15 +65,67 @@ def _pares_de_comparacao(estudo):
     )
 
 
-def calcular_comparabilidade(estudo, especificacao) -> dict:
-    """Todas as medidas do estudo de comparabilidade."""
-    x, y, nomes = _pares_de_comparacao(estudo)
+def dados_brutos(estudo) -> dict:
+    """As medições como foram digitadas, para o anexo do relatório.
+
+    Um relatório de validação sem os dados brutos é uma conclusão sem prova: o
+    auditor consegue conferir se a conta bate, mas não de onde vieram os
+    números. Por isso o anexo traz réplica por réplica e amostra por amostra —
+    incluindo as descartadas, com a justificativa ao lado. Uma medição excluída
+    que some do documento é indistinguível de uma medição que nunca existiu.
+    """
+    niveis = []
+    for nivel in estudo.niveis.all().select_related("controle"):
+        corridas: dict[int, list] = {}
+        for replica in nivel.replicas.all().order_by("corrida", "sequencia"):
+            corridas.setdefault(replica.corrida, []).append(replica)
+        niveis.append(
+            {
+                "nivel": nivel,
+                "corridas": [
+                    {"numero": numero, "replicas": corridas[numero]}
+                    for numero in sorted(corridas)
+                ],
+                "total": sum(len(r) for r in corridas.values()),
+                "descartadas": sum(
+                    1 for lista in corridas.values() for r in lista if r.excluida
+                ),
+            }
+        )
+
+    amostras = list(estudo.amostras_comparacao.all().order_by("pk"))
+    metade = (len(amostras) + 1) // 2
+
+    return {
+        "niveis": niveis,
+        # Duas colunas lado a lado: quarenta linhas numa coluna só gastam uma
+        # página inteira de papel para mostrar três números por linha.
+        "amostras": [amostras[:metade], amostras[metade:]],
+        "total_amostras": len(amostras),
+        "amostras_descartadas": sum(1 for a in amostras if a.excluida),
+        "tem_dados": bool(niveis or amostras),
+    }
+
+
+def calcular_comparabilidade(estudo, especificacao, faixa=None) -> dict:
+    """Todas as medidas do estudo de comparabilidade.
+
+    Com ``faixa``, calcula sobre as amostras daquela faixa de concentração —
+    e pelo mesmo caminho, com as mesmas funções. O recorte não pode ter
+    aritmética própria: seria uma segunda implementação de regressão, e a que
+    acabaria no relatório assinado seria a segunda.
+    """
+    x, y, nomes = _pares_de_comparacao(estudo, faixa)
 
     if not x:
         return {
             "tem_dados": False,
             "n": 0,
-            "motivo": "nenhuma amostra pareada cadastrada",
+            "motivo": (
+                "nenhuma amostra pareada nesta faixa"
+                if faixa is not None
+                else "nenhuma amostra pareada cadastrada"
+            ),
         }
 
     deming = comp.deming(x, y)
@@ -446,6 +509,63 @@ def _modulo_efetivo(estudo) -> str:
     return ""
 
 
+def calcular_recorte(estudo, minimo: float, maximo: float, selecionavel: bool = False) -> dict:
+    """Recalcula a comparabilidade sobre uma faixa de concentração.
+
+    Passa pelas mesmas funções do estudo inteiro — a filtragem acontece na
+    leitura dos pares, e daí para baixo nada sabe que é um recorte. Isso não é
+    elegância: um recorte com aritmética própria seria uma segunda
+    implementação de regressão, e a que acabaria impressa no relatório
+    assinado seria a segunda.
+
+    O gráfico devolvido mostra a nuvem inteira com a faixa em destaque, e não
+    só os pontos da faixa. Mostrar a faixa sozinha esconderia exatamente o que
+    motivou o recorte.
+    """
+    especificacao = montar_especificacao(estudo.especificacao)
+    faixa = (float(minimo), float(maximo))
+    recorte = calcular_comparabilidade(estudo, especificacao, faixa=faixa)
+
+    inteiro = calcular_comparabilidade(estudo, especificacao)
+    todos_x = inteiro["valores_comparacao"] if inteiro["tem_dados"] else []
+    todos_y = inteiro["valores_teste"] if inteiro["tem_dados"] else []
+    todos_nomes = inteiro["identificacoes"] if inteiro["tem_dados"] else []
+    todos_fora = inteiro["fora_do_limite"] if inteiro["tem_dados"] else []
+
+    regressao = recorte.get("regressao") or {}
+    grafico = graf.grafico_regressao(
+        todos_x,
+        todos_y,
+        regressao.get("inclinacao"),
+        regressao.get("intercepto"),
+        todos_fora,
+        todos_nomes,
+        estudo.mensurando.unidade_medida,
+        titulo="Regressão da faixa examinada",
+        faixa=faixa,
+        selecionavel=selecionavel,
+    )
+
+    return {
+        "faixa": faixa,
+        "minimo": minimo,
+        "maximo": maximo,
+        "comparabilidade": recorte,
+        "grafico": grafico,
+        "n_total": inteiro["n"] if inteiro["tem_dados"] else 0,
+        # Um recorte com pouquíssimas amostras produz uma inclinação que muda
+        # de figura com um ponto a mais. Dizer isso é o que impede o número de
+        # ser lido como conclusão.
+        "poucas_amostras": recorte["tem_dados"] and recorte["n"] < MINIMO_AMOSTRAS_RECORTE,
+        "minimo_recomendado": MINIMO_AMOSTRAS_RECORTE,
+    }
+
+
+# Abaixo disto a inclinação da faixa oscila demais para significar alguma
+# coisa: com 6 pares numa faixa estreita, um único ponto muda a reta de figura.
+MINIMO_AMOSTRAS_RECORTE = 10
+
+
 def _graficos(estudo, precisao_por_nivel, comparabilidade) -> dict:
     unidade = estudo.mensurando.unidade_medida
     saida = {"regressao": None, "bland_altman": None, "levey_jennings": []}
@@ -466,6 +586,7 @@ def _graficos(estudo, precisao_por_nivel, comparabilidade) -> dict:
         saida["regressao"] = graf.grafico_regressao(
             x, y, regressao["inclinacao"], regressao["intercepto"], fora, nomes, unidade,
             titulo="Comparação de métodos — regressão linear simples",
+            selecionavel=True,
         )
         saida["bland_altman"] = graf.grafico_bland_altman(
             x, y, bland["vies"], bland["limite_inferior"], bland["limite_superior"],
@@ -712,6 +833,108 @@ def registrar_analise_critica(estudo, usuario, texto: str) -> str:
         )
 
     return "editada" if anterior else "escrita"
+
+
+def recortes_do_estudo(estudo, selecionavel: bool = False) -> list[dict]:
+    """Os recortes salvos, já recalculados e desenhados.
+
+    Fica fora de ``calcular()`` de propósito: o retrato congelado guarda os
+    números do estudo, e um SVG de meia dezena de quilobytes por recorte dentro
+    dele não é dado de validação — é desenho, e desenho se refaz.
+    """
+    saida = []
+    for recorte in estudo.recortes.all().select_related("criado_por"):
+        dados = calcular_recorte(
+            estudo, float(recorte.minimo), float(recorte.maximo), selecionavel=False
+        )
+        dados["registro"] = recorte
+        saida.append(dados)
+    return saida
+
+
+def salvar_recorte(estudo, usuario, rotulo: str, minimo, maximo, justificativa: str):
+    """Registra uma faixa examinada, para ela acompanhar o relatório.
+
+    Exige justificativa escrita. Um subconjunto escolhido à mão dentro de um
+    documento assinado, sem dizer por que aquela faixa, é o critério subjetivo
+    promovido a registro de qualidade — que é exatamente o problema que o
+    recorte veio resolver.
+    """
+    from .models import RecorteRegressao
+
+    if estudo.situacao == estudo.LIBERADO:
+        raise AcaoRecusada(
+            "Este relatório já foi assinado. Um documento liberado não recebe "
+            "recorte novo — cancele o estudo e abra outro."
+        )
+
+    rotulo = (rotulo or "").strip()
+    justificativa = (justificativa or "").strip()
+    if not rotulo:
+        raise AcaoRecusada("Dê um nome ao recorte — é assim que ele aparece no relatório.")
+    if not justificativa:
+        raise AcaoRecusada(
+            "Escreva por que esta faixa foi examinada em separado. Sem isso, o "
+            "recorte não se sustenta no relatório."
+        )
+
+    try:
+        limite_inferior = converter_numero(str(minimo))
+        limite_superior = converter_numero(str(maximo))
+    except (InvalidOperation, ValueError, NumeroAmbiguo):
+        raise AcaoRecusada("Faixa inválida: os dois limites precisam ser números.")
+
+    if limite_inferior >= limite_superior:
+        raise AcaoRecusada("O limite superior da faixa deve ser maior que o inferior.")
+
+    dados = calcular_recorte(estudo, float(limite_inferior), float(limite_superior))
+    if not dados["comparabilidade"]["tem_dados"]:
+        raise AcaoRecusada("Nenhuma amostra pareada cai nesta faixa.")
+
+    with transaction.atomic():
+        recorte = RecorteRegressao.objects.create(
+            estudo=estudo,
+            rotulo=rotulo[:80],
+            minimo=limite_inferior,
+            maximo=limite_superior,
+            justificativa=justificativa,
+            criado_por=usuario if usuario.is_authenticated else None,
+        )
+        RegistroAuditoria.objects.create(
+            laboratorio=estudo.laboratorio,
+            usuario=usuario if usuario.is_authenticated else None,
+            acao="acrescentou um recorte da regressão",
+            objeto=estudo.identificacao,
+            detalhe={
+                "rotulo": recorte.rotulo,
+                "faixa": [str(limite_inferior), str(limite_superior)],
+                "amostras_na_faixa": dados["comparabilidade"]["n"],
+                "amostras_no_estudo": dados["n_total"],
+            },
+        )
+    return recorte
+
+
+def remover_recorte(estudo, usuario, recorte_id) -> str:
+    """Apaga um recorte salvo. A exclusão também vai para a trilha."""
+    if estudo.situacao == estudo.LIBERADO:
+        raise AcaoRecusada("Um relatório assinado não muda de conteúdo.")
+
+    recorte = estudo.recortes.filter(pk=recorte_id).first()
+    if recorte is None:
+        raise AcaoRecusada("Recorte não encontrado neste estudo.")
+
+    rotulo = recorte.rotulo
+    with transaction.atomic():
+        recorte.delete()
+        RegistroAuditoria.objects.create(
+            laboratorio=estudo.laboratorio,
+            usuario=usuario if usuario.is_authenticated else None,
+            acao="removeu um recorte da regressão",
+            objeto=estudo.identificacao,
+            detalhe={"rotulo": rotulo},
+        )
+    return rotulo
 
 
 def registrar_veredito(estudo, usuario, escolha: str) -> str:

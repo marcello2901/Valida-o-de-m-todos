@@ -1,7 +1,9 @@
 {% extends "base.html" %}
-{% load numeros %}
+{% load static numeros %}
 
 {% block titulo %}{{ estudo.mensurando.nome }} — {{ estudo.sistema_teste.equipamento }}{% endblock %}
+
+{% block scripts %}<script src="{% static 'js/selecao.js' %}"></script>{% endblock %}
 
 {% block estilo %}
 <style>
@@ -64,6 +66,39 @@
 
   /* Os dois números que estão sendo comparados, cada um com o nome do que é.
      Um valor solto numa coluna chamada "comparado com" não diz de onde veio. */
+  /* --- Exame por faixa de concentração --------------------------------------
+   *
+   * O painel fica colado ao gráfico: é uma leitura do mesmo desenho, e não uma
+   * ferramenta à parte. A comparação com o estudo inteiro anda junto — uma
+   * inclinação de faixa mostrada sozinha não diz se mudou alguma coisa.
+   */
+  .selecao-faixa { margin-top: 16px; }
+  .barra-faixa {
+    margin-top: 10px; padding: 12px 14px; background: var(--faixa);
+    border: 1px solid var(--linha); border-radius: var(--raio-menor);
+  }
+  .linha-faixa { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+  .rotulo-faixa {
+    font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .06em; color: var(--tinta-3);
+  }
+  .linha-faixa input { width: 110px; }
+  .linha-faixa .ate { font-size: 12px; color: var(--tinta-3); }
+
+  .painel-faixa { margin-top: 14px; }
+  .salvar-faixa {
+    margin-top: 14px; padding: 14px 15px; background: var(--superficie);
+    border: 1px solid var(--linha); border-radius: var(--raio-menor);
+    display: grid; gap: 11px;
+  }
+  .salvar-faixa .nota { margin: 0; }
+
+  .recorte-salvo {
+    margin-top: 14px; padding: 14px 15px; border: 1px solid var(--linha);
+    border-radius: var(--raio-menor); background: var(--superficie);
+  }
+  .cabeca-recorte { display: flex; align-items: flex-start; gap: 12px; }
+
   /* Caixa de decisão. Fica dentro do formulário da análise crítica porque o
      veredito é a conclusão dela, e sai no mesmo envio. */
   .decisao {
@@ -538,7 +573,7 @@
     </details>
 
     <!-- 5. Comparabilidade -->
-    <details class="cartao faixa" {% if comparabilidade.tem_dados %}open{% endif %}>
+    <details class="cartao faixa" id="comparabilidade" {% if comparabilidade.tem_dados %}open{% endif %}>
       <summary>
         <span class="marcador {% if andamento.comparacao_pct == 100 %}marcador--pronto{% elif comparabilidade.tem_dados %}marcador--corrente{% else %}marcador--espera{% endif %}">{% if andamento.comparacao_pct == 100 %}&#10003;{% else %}5{% endif %}</span>
         <span class="titulo-faixa">Comparabilidade</span>
@@ -640,7 +675,163 @@
             ρc diz se formam <em>a</em> reta de identidade.
           </p>
 
-          {% if graficos.regressao %}<div class="grafico">{{ graficos.regressao|safe }}</div>{% endif %}
+          {% comment %}
+            Exame por faixa de concentração.
+
+            O r da regressão depende da amplitude das amostras: uma amostra
+            muito acima das outras aumenta a variância de X e empurra o r para
+            1 sozinha, e o gráfico fica com cara de reta enquanto o miolo dos
+            dados — onde estão os pacientes — pode não concordar. Arrastar uma
+            faixa refaz a conta só com as amostras daquela concentração.
+
+            Quem recalcula é o motor, no servidor, pelas mesmas funções do
+            estudo inteiro. O navegador só devolve os dois limites.
+          {% endcomment %}
+          {% if graficos.regressao %}
+          <div class="selecao-faixa" data-selecao>
+            {% if recorte_em_exame %}
+              <div class="grafico">{{ recorte_em_exame.grafico|safe }}</div>
+            {% else %}
+              <div class="grafico">{{ graficos.regressao|safe }}</div>
+            {% endif %}
+
+            <div class="barra-faixa">
+              <form method="get" data-faixa-formulario class="linha-faixa">
+                <span class="rotulo-faixa">Examinar faixa</span>
+                <input type="text" name="faixa_min" data-faixa-min
+                       value="{{ recorte_em_exame.minimo|default_if_none:'' }}"
+                       placeholder="de" aria-label="Concentração mínima da faixa">
+                <span class="ate">até</span>
+                <input type="text" name="faixa_max" data-faixa-max
+                       value="{{ recorte_em_exame.maximo|default_if_none:'' }}"
+                       placeholder="até" aria-label="Concentração máxima da faixa">
+                <button type="submit" class="botao" data-faixa-aplicar>Recalcular a faixa</button>
+                {% if recorte_em_exame %}
+                <a href="{% url 'resultado_estudo' estudo.pk %}#comparabilidade" class="botao">
+                  Voltar ao gráfico inteiro
+                </a>
+                {% endif %}
+              </form>
+              <p class="nota" data-faixa-recado hidden></p>
+              <p class="nota" style="margin: 6px 0 0">
+                Arraste sobre o gráfico para escolher a faixa. A seleção é por
+                concentração: <strong>todas</strong> as amostras dentro dela entram, para
+                não sobrar a possibilidade de contornar um ponto discordante mantendo
+                os vizinhos.
+              </p>
+            </div>
+
+            {% if recorte_em_exame %}
+            {% with r=recorte_em_exame.comparabilidade %}
+            <div class="painel-faixa">
+              {% if r.tem_dados %}
+              <table>
+                <tr><th>Na faixa examinada</th><th class="n">Valor</th><th class="n">Estudo inteiro</th></tr>
+                <tr>
+                  <td>Amostras</td>
+                  <td class="n"><strong>{{ r.n }}</strong></td>
+                  <td class="n">{{ recorte_em_exame.n_total }}</td>
+                </tr>
+                <tr>
+                  <td>Regressão de Deming</td>
+                  <td class="n">y = {{ r.deming.inclinacao|floatformat:4 }}x {% if r.deming.intercepto >= 0 %}+{% else %}&minus;{% endif %} {{ r.deming.intercepto|floatformat:4 }}</td>
+                  <td class="n">y = {{ c.deming.inclinacao|floatformat:4 }}x {% if c.deming.intercepto >= 0 %}+{% else %}&minus;{% endif %} {{ c.deming.intercepto|floatformat:4 }}</td>
+                </tr>
+                <tr>
+                  <td>Correlação de Pearson</td>
+                  <td class="n">r = {{ r.regressao.r|floatformat:4|default:"—" }}</td>
+                  <td class="n">r = {{ c.regressao.r|floatformat:4|default:"—" }}</td>
+                </tr>
+                <tr>
+                  <td>Razão das médias</td>
+                  <td class="n">{{ r.razao_das_medias.desvio_pct|sinalizado:2 }}%</td>
+                  <td class="n">{{ c.razao_das_medias.desvio_pct|sinalizado:2 }}%</td>
+                </tr>
+                <tr>
+                  <td>Concordância analítica</td>
+                  <td class="n">{{ r.analitica.concordancia_pct|floatformat:1|default:"—" }}%</td>
+                  <td class="n">{{ c.analitica.concordancia_pct|floatformat:1|default:"—" }}%</td>
+                </tr>
+              </table>
+
+              {% if recorte_em_exame.poucas_amostras %}
+              <div class="aviso" style="margin: 12px 0 0">
+                Esta faixa tem {{ r.n }} amostra(s). Abaixo de
+                {{ recorte_em_exame.minimo_recomendado }} a inclinação muda de figura com um
+                ponto a mais &mdash; leia como indício, não como conclusão.
+              </div>
+              {% endif %}
+
+              {% comment %}
+                Salvar exige nome e motivo. Um subconjunto escolhido à mão dentro
+                de um documento assinado, sem dizer por que aquela faixa, é o
+                critério subjetivo promovido a registro de qualidade.
+              {% endcomment %}
+              {% if estudo.situacao != "liberado" %}
+              <form method="post" action="{% url 'recorte_estudo' estudo.pk %}" class="salvar-faixa">
+                {% csrf_token %}
+                <input type="hidden" name="minimo" value="{{ recorte_em_exame.minimo }}">
+                <input type="hidden" name="maximo" value="{{ recorte_em_exame.maximo }}">
+                <div class="campo">
+                  <label for="rotulo-recorte">Nome do recorte</label>
+                  <input type="text" name="rotulo" id="rotulo-recorte" maxlength="80"
+                         placeholder="Ex.: faixa baixa — até 150 {{ estudo.mensurando.unidade_medida }}">
+                </div>
+                <div class="campo">
+                  <label for="motivo-recorte">Por que esta faixa</label>
+                  <textarea name="justificativa" id="motivo-recorte" rows="3"
+                            placeholder="Ex.: a amostra AM-037, a 512, domina a reta do estudo inteiro. Esta faixa cobre a concentração em que estão 95% dos pacientes."></textarea>
+                </div>
+                <button type="submit" class="botao botao--primario">
+                  Salvar recorte no relatório
+                </button>
+                <span class="nota">
+                  Entra no relatório <strong>ao lado</strong> do gráfico completo, nunca no
+                  lugar dele.
+                </span>
+              </form>
+              {% endif %}
+              {% else %}
+              <p class="vazio">{{ r.motivo|capfirst }}.</p>
+              {% endif %}
+            </div>
+            {% endwith %}
+            {% endif %}
+          </div>
+          {% endif %}
+
+          {% if recortes %}
+          <div class="recortes-salvos">
+            <h3 style="font-size: 13px; margin: 22px 0 8px">Recortes salvos</h3>
+            {% for salvo in recortes %}
+            <div class="recorte-salvo">
+              <div class="cabeca-recorte">
+                <div>
+                  <strong>{{ salvo.registro.rotulo }}</strong>
+                  <div class="nota">
+                    {{ salvo.registro.faixa_escrita }} {{ estudo.mensurando.unidade_medida }} &middot;
+                    {{ salvo.comparabilidade.n }} de {{ salvo.n_total }} amostras &middot;
+                    por {{ salvo.registro.criado_por.get_full_name|default:salvo.registro.criado_por.username|default:"—" }}
+                    em {{ salvo.registro.criado_em|date:"d/m/Y" }}
+                  </div>
+                </div>
+                <div class="cresce"></div>
+                {% if estudo.situacao != "liberado" %}
+                <form method="post" action="{% url 'recorte_estudo' estudo.pk %}">
+                  {% csrf_token %}
+                  <input type="hidden" name="acao" value="remover">
+                  <input type="hidden" name="recorte" value="{{ salvo.registro.pk }}">
+                  <button type="submit" class="botao">Remover</button>
+                </form>
+                {% endif %}
+              </div>
+              <p class="nota" style="margin: 8px 0 0">{{ salvo.registro.justificativa }}</p>
+              <div class="grafico">{{ salvo.grafico|safe }}</div>
+            </div>
+            {% endfor %}
+          </div>
+          {% endif %}
+
           {% if graficos.bland_altman %}<div class="grafico">{{ graficos.bland_altman|safe }}</div>{% endif %}
 
           {% if c.analitica.discordantes %}

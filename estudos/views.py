@@ -215,6 +215,10 @@ def relatorio(request, estudo_id: int):
     contexto["congelado"] = veredito
     contexto["emitido_em"] = timezone.now()
     contexto["emitido_por"] = request.user
+    # O anexo sai dos registros, não do retrato congelado: são os dados brutos,
+    # que não mudam com o recálculo. É a prova de onde vieram os números.
+    contexto["brutos"] = servicos.dados_brutos(estudo)
+    contexto["recortes"] = servicos.recortes_do_estudo(estudo)
     # Mesma checagem da tela de trabalho: se a ficha do analito mudou depois do
     # congelamento, o relatório diz isso em vez de imprimir números que não
     # batem com o veredito impresso ao lado.
@@ -375,6 +379,68 @@ def qualitativas(request, estudo_id: int):
     )
 
 
+@login_required
+@require_POST
+def recorte(request, estudo_id: int):
+    """Salva ou remove um recorte da regressão."""
+    estudo = _estudo_do_usuario(request, estudo_id)
+    voltar = f"{reverse('resultado_estudo', args=[estudo.pk])}#comparabilidade"
+
+    try:
+        if request.POST.get("acao") == "remover":
+            rotulo = servicos.remover_recorte(
+                estudo, request.user, request.POST.get("recorte")
+            )
+            messages.success(request, f"Recorte “{rotulo}” removido. A remoção está na trilha.")
+        else:
+            salvo = servicos.salvar_recorte(
+                estudo,
+                request.user,
+                request.POST.get("rotulo", ""),
+                request.POST.get("minimo", ""),
+                request.POST.get("maximo", ""),
+                request.POST.get("justificativa", ""),
+            )
+            messages.success(
+                request,
+                f"Recorte “{salvo.rotulo}” salvo. Ele acompanha o relatório ao lado "
+                "do gráfico completo, nunca no lugar dele.",
+            )
+    except servicos.AcaoRecusada as recusa:
+        messages.error(request, str(recusa))
+        return redirect(_com_faixa(estudo, request.POST))
+
+    return redirect(voltar)
+
+
+def _com_faixa(estudo, dados) -> str:
+    """Volta para a tela mantendo a faixa que estava sendo examinada.
+
+    Sem isso, um erro no formulário devolvia o usuário ao gráfico inteiro e a
+    seleção que ele tinha acabado de arrastar se perdia.
+    """
+    destino = reverse("resultado_estudo", args=[estudo.pk])
+    minimo = (dados.get("minimo") or "").strip()
+    maximo = (dados.get("maximo") or "").strip()
+    if minimo and maximo:
+        return f"{destino}?faixa_min={minimo}&faixa_max={maximo}#comparabilidade"
+    return destino
+
+
+def _faixa_pedida(request):
+    """A faixa que a tela está examinando, vinda da barra de endereço."""
+    bruto_min = (request.GET.get("faixa_min") or "").strip()
+    bruto_max = (request.GET.get("faixa_max") or "").strip()
+    if not bruto_min or not bruto_max:
+        return None
+    try:
+        minimo = float(servicos.converter_numero(bruto_min))
+        maximo = float(servicos.converter_numero(bruto_max))
+    except (InvalidOperation, ValueError):
+        return None
+    return (minimo, maximo) if minimo < maximo else None
+
+
 def _relatar_pendencias(request, resumo, unidade: str):
     """Diz o que entrou e o que ficou de fora, sem desfazer o que entrou.
 
@@ -473,6 +539,16 @@ def resultado(request, estudo_id: int):
     congelado = getattr(estudo, "veredito", None)
     contexto["congelado"] = congelado
     contexto["divergencia"] = _ficha_mudou(congelado, contexto.get("veredito"))
+
+    # Recortes salvos, e o que está sendo examinado agora. A faixa em exame vive
+    # na barra de endereço, e não em sessão: assim o laboratório consegue mandar
+    # o link de uma faixa para o colega olhar a mesma coisa.
+    contexto["recortes"] = servicos.recortes_do_estudo(estudo)
+    faixa = _faixa_pedida(request)
+    if faixa is not None and contexto.get("comparabilidade", {}).get("tem_dados"):
+        contexto["recorte_em_exame"] = servicos.calcular_recorte(
+            estudo, faixa[0], faixa[1], selecionavel=True
+        )
     return render(request, "estudos/resultado.html", contexto)
 
 

@@ -2335,3 +2335,270 @@ class TestRelatorioQualitativoNaoImprimeCriterioQuantitativo(TestCase):
 
         self.assertIn("Erro total máximo", corpo)
         self.assertIn("Desenho da precisão", corpo)
+
+
+class TestAnexoDeDadosBrutos(TestCase):
+    """O relatório carrega a prova, não só a conclusão.
+
+    Um auditor consegue conferir se a conta bate; sem os dados brutos ele não
+    tem como saber de onde vieram os números. E o que foi descartado precisa
+    aparecer: uma medição excluída que some do documento é indistinguível de
+    uma que nunca existiu.
+    """
+
+    def setUp(self):
+        self.laboratorio = montar_laboratorio("Lab A", "11.111.111/0001-11")
+        self.usuario = Usuario.objects.create_user(
+            username="rt", password="senha-longa-de-teste",
+            laboratorio=self.laboratorio, funcao=Usuario.RESPONSAVEL,
+        )
+        self.estudo = montar_estudo(self.laboratorio, self.usuario)
+        self.client.force_login(self.usuario)
+        self.client.post(reverse("concluir_estudo", args=[self.estudo.pk]))
+
+    def _relatorio(self):
+        return self.client.get(
+            reverse("relatorio_estudo", args=[self.estudo.pk])
+        ).content.decode()
+
+    def test_traz_as_replicas_de_cada_nivel_por_corrida(self):
+        corpo = self._relatorio()
+
+        self.assertIn("Anexo &mdash; dados brutos", corpo)
+        self.assertIn("Corrida 1", corpo)
+        primeira = self.estudo.niveis.get(numero=1).replicas.order_by("corrida", "sequencia").first()
+        self.assertIn(f"{primeira.valor:.4f}".replace(".", ","), corpo)
+
+    def test_traz_as_amostras_pareadas_com_os_dois_resultados(self):
+        corpo = self._relatorio()
+
+        amostra = self.estudo.amostras_comparacao.order_by("pk").first()
+        self.assertIn(amostra.identificacao, corpo)
+        self.assertIn(f"{amostra.valor_comparacao:.4f}".replace(".", ","), corpo)
+        self.assertIn(f"{amostra.valor_teste:.4f}".replace(".", ","), corpo)
+
+    def test_a_replica_descartada_aparece_com_a_justificativa(self):
+        replica = self.estudo.niveis.get(numero=1).replicas.first()
+        replica.excluida = True
+        replica.justificativa_exclusao = "bolha na cubeta"
+        replica.save()
+
+        corpo = self._relatorio()
+
+        self.assertIn("bolha na cubeta", corpo)
+        self.assertIn("descartada", corpo)
+
+    def test_a_amostra_descartada_aparece_com_a_justificativa(self):
+        amostra = self.estudo.amostras_comparacao.first()
+        amostra.excluida = True
+        amostra.justificativa_exclusao = "amostra hemolisada"
+        amostra.save()
+
+        corpo = self._relatorio()
+
+        self.assertIn("amostra hemolisada", corpo)
+
+    def test_o_anexo_comeca_em_folha_propria(self):
+        # É prova anexada ao documento assinado, não continuação dele.
+        self.assertIn(".anexo { break-before: page;", self._relatorio())
+
+    def test_o_descarte_nao_entra_no_calculo(self):
+        # O anexo mostra a medição; a conta continua sem ela.
+        antes = servicos.calcular(self.estudo)["comparabilidade"]["n"]
+        amostra = self.estudo.amostras_comparacao.first()
+        amostra.excluida = True
+        amostra.justificativa_exclusao = "amostra hemolisada"
+        amostra.save()
+
+        depois = servicos.calcular(self.estudo)["comparabilidade"]["n"]
+
+        self.assertEqual(depois, antes - 1)
+        self.assertIn(amostra.identificacao, self._relatorio())
+
+
+class TestRecorteDaRegressao(TestCase):
+    """Examinar uma faixa de concentração em separado, com registro.
+
+    O r da regressão depende da amplitude das amostras: uma amostra muito acima
+    das outras aumenta a variância de X e empurra o r para 1 sozinha. A prática
+    do laboratório era apagar os extremos e olhar de novo — o que funciona e não
+    deixa rastro. O recorte é a mesma leitura, registrada.
+    """
+
+    def setUp(self):
+        self.laboratorio = montar_laboratorio("Lab A", "11.111.111/0001-11")
+        self.usuario = Usuario.objects.create_user(
+            username="rt", password="senha-longa-de-teste",
+            laboratorio=self.laboratorio, funcao=Usuario.RESPONSAVEL,
+        )
+        self.estudo = montar_estudo(self.laboratorio, self.usuario)
+        self.client.force_login(self.usuario)
+        self.tela = reverse("resultado_estudo", args=[self.estudo.pk])
+        self.url = reverse("recorte_estudo", args=[self.estudo.pk])
+
+        valores = [float(a.valor_comparacao) for a in self.estudo.amostras_comparacao.all()]
+        self.piso, self.teto = min(valores), max(valores)
+        self.meio = (self.piso + self.teto) / 2
+
+    # --- O cálculo -----------------------------------------------------------
+
+    def test_a_faixa_passa_pelo_mesmo_motor_do_estudo_inteiro(self):
+        # Sem aritmética própria: um recorte com regressão própria seria uma
+        # segunda implementação, e a que acabaria no relatório seria a segunda.
+        recorte = servicos.calcular_recorte(self.estudo, self.piso, self.teto)
+        inteiro = servicos.calcular(self.estudo)["comparabilidade"]
+
+        self.assertEqual(recorte["comparabilidade"]["n"], inteiro["n"])
+        self.assertAlmostEqual(
+            recorte["comparabilidade"]["deming"]["inclinacao"],
+            inteiro["deming"]["inclinacao"],
+            places=9,
+        )
+
+    def test_a_faixa_recorta_as_amostras(self):
+        recorte = servicos.calcular_recorte(self.estudo, self.piso, self.meio)
+
+        self.assertLess(recorte["comparabilidade"]["n"], recorte["n_total"])
+        self.assertTrue(
+            all(self.piso <= x <= self.meio for x in recorte["comparabilidade"]["valores_comparacao"])
+        )
+
+    def test_faixa_vazia_diz_que_esta_vazia_em_vez_de_quebrar(self):
+        recorte = servicos.calcular_recorte(self.estudo, self.teto + 1000, self.teto + 2000)
+
+        self.assertFalse(recorte["comparabilidade"]["tem_dados"])
+        self.assertIn("faixa", recorte["comparabilidade"]["motivo"])
+
+    def test_faixa_com_poucas_amostras_e_sinalizada(self):
+        recorte = servicos.calcular_recorte(self.estudo, self.piso, self.piso + 0.01)
+
+        self.assertTrue(recorte["poucas_amostras"])
+
+    # --- O gráfico -----------------------------------------------------------
+
+    def test_o_grafico_da_faixa_mostra_a_nuvem_inteira(self):
+        # Mostrar só os pontos da faixa esconderia justamente o que motivou o
+        # recorte.
+        recorte = servicos.calcular_recorte(self.estudo, self.piso, self.meio)
+
+        self.assertIn("fora da faixa examinada", recorte["grafico"])
+
+    def test_o_grafico_da_tela_carrega_a_escala_para_o_arrasto(self):
+        resposta = self.client.get(self.tela)
+
+        self.assertContains(resposta, 'data-selecionavel="regressao"')
+        self.assertContains(resposta, "data-x-minimo=")
+        self.assertContains(resposta, "data-pixel-inicio=")
+
+    # --- Salvar --------------------------------------------------------------
+
+    def _salvar(self, **campos):
+        dados = {
+            "minimo": str(self.piso),
+            "maximo": str(self.meio),
+            "rotulo": "Faixa baixa",
+            "justificativa": "A amostra do topo domina a reta do estudo inteiro.",
+        }
+        dados.update(campos)
+        return self.client.post(self.url, dados, follow=True)
+
+    def test_salva_com_nome_e_motivo(self):
+        self._salvar()
+
+        recorte = self.estudo.recortes.get()
+        self.assertEqual(recorte.rotulo, "Faixa baixa")
+        self.assertEqual(recorte.criado_por, self.usuario)
+        self.assertIn("domina a reta", recorte.justificativa)
+
+    def test_recusa_recorte_sem_motivo_escrito(self):
+        # Subconjunto escolhido à mão dentro de documento assinado, sem dizer
+        # por quê, é o critério subjetivo promovido a registro de qualidade.
+        resposta = self._salvar(justificativa="")
+
+        self.assertEqual(self.estudo.recortes.count(), 0)
+        self.assertContains(resposta, "Escreva por que esta faixa")
+
+    def test_recusa_recorte_sem_nome(self):
+        resposta = self._salvar(rotulo="")
+
+        self.assertEqual(self.estudo.recortes.count(), 0)
+        self.assertContains(resposta, "Dê um nome ao recorte")
+
+    def test_recusa_faixa_invertida(self):
+        resposta = self._salvar(minimo=str(self.teto), maximo=str(self.piso))
+
+        self.assertEqual(self.estudo.recortes.count(), 0)
+        self.assertContains(resposta, "deve ser maior que o inferior")
+
+    def test_recusa_faixa_sem_amostra(self):
+        resposta = self._salvar(
+            minimo=str(self.teto + 1000), maximo=str(self.teto + 2000)
+        )
+
+        self.assertEqual(self.estudo.recortes.count(), 0)
+        self.assertContains(resposta, "Nenhuma amostra pareada cai nesta faixa")
+
+    def test_relatorio_assinado_nao_recebe_recorte_novo(self):
+        self.client.post(reverse("concluir_estudo", args=[self.estudo.pk]))
+        self.client.post(
+            reverse("analise_estudo", args=[self.estudo.pk]),
+            {"analise_critica": "", "veredito": "APROVADO"},
+        )
+        self.client.post(reverse("liberar_estudo", args=[self.estudo.pk]))
+
+        resposta = self._salvar()
+
+        self.assertEqual(self.estudo.recortes.count(), 0)
+        self.assertContains(resposta, "já foi assinado")
+
+    def test_salvar_e_remover_vao_para_a_trilha(self):
+        self._salvar()
+        recorte = self.estudo.recortes.get()
+
+        self.client.post(self.url, {"acao": "remover", "recorte": recorte.pk})
+
+        self.assertEqual(self.estudo.recortes.count(), 0)
+        acoes = set(RegistroAuditoria.objects.values_list("acao", flat=True))
+        self.assertIn("acrescentou um recorte da regressão", acoes)
+        self.assertIn("removeu um recorte da regressão", acoes)
+
+    # --- No relatório --------------------------------------------------------
+
+    def test_o_recorte_acompanha_o_grafico_inteiro_e_nao_o_substitui(self):
+        self._salvar()
+        self.client.post(reverse("concluir_estudo", args=[self.estudo.pk]))
+
+        corpo = self.client.get(
+            reverse("relatorio_estudo", args=[self.estudo.pk])
+        ).content.decode()
+
+        completo = corpo.index("Comparação de métodos — regressão linear simples")
+        recorte = corpo.index("Recorte &mdash; Faixa baixa")
+        self.assertLess(completo, recorte)
+        self.assertIn("domina a reta", corpo)
+        self.assertIn("Estudo inteiro", corpo)
+
+    def test_sem_recorte_salvo_o_relatorio_nao_muda(self):
+        self.client.post(reverse("concluir_estudo", args=[self.estudo.pk]))
+
+        corpo = self.client.get(
+            reverse("relatorio_estudo", args=[self.estudo.pk])
+        ).content.decode()
+
+        self.assertNotIn("Recorte &mdash;", corpo)
+
+    # --- A tela de exame -----------------------------------------------------
+
+    def test_a_tela_examina_a_faixa_pedida_na_barra_de_endereco(self):
+        resposta = self.client.get(
+            f"{self.tela}?faixa_min={self.piso}&faixa_max={self.meio}"
+        )
+
+        self.assertIsNotNone(resposta.context["recorte_em_exame"])
+        self.assertContains(resposta, "Voltar ao gráfico inteiro")
+
+    def test_faixa_ilegivel_na_barra_de_endereco_e_ignorada(self):
+        resposta = self.client.get(f"{self.tela}?faixa_min=abc&faixa_max=xyz")
+
+        self.assertEqual(resposta.status_code, 200)
+        self.assertIsNone(resposta.context.get("recorte_em_exame"))
