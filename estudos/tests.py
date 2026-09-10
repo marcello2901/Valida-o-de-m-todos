@@ -1278,12 +1278,20 @@ class TestRelatorio(TestCase):
         json.dumps(self.estudo.veredito.detalhamento)  # não pode levantar
 
     def test_o_relatorio_cita_o_intervalo_analitico_do_kit(self):
+        # O rótulo perdeu o "(teste)": o intervalo mora dentro do cartão do
+        # sistema a que pertence, e o cartão já diz qual é.
         self.calcular()
 
         resposta = self.client.get(self.url)
 
-        self.assertContains(resposta, "Intervalo analítico (teste)")
+        self.assertContains(resposta, "Intervalo analítico")
         self.assertContains(resposta, "lote R1")
+        corpo = resposta.content.decode()
+        cartao_teste = corpo.index("Sistema em teste")
+        cartao_comparacao = corpo.index("Sistema de comparação")
+        intervalo = corpo.index("Intervalo analítico")
+        self.assertLess(cartao_teste, intervalo)
+        self.assertLess(intervalo, cartao_comparacao)
 
 
 def pytest_aprox(valor, casas=6):
@@ -2199,3 +2207,131 @@ class TestConcentracaoQueResolveOLimite(TestCase):
 
         self.assertContains(resposta, "Limites resolvidos em")
         self.assertContains(resposta, "média interlaboratorial")
+
+
+class TestTipografiaDoDocumentoImpresso(TestCase):
+    """Garantias de paginação que ninguém nota até faltarem.
+
+    Um relatório de validação é arquivado em papel e conferido linha a linha.
+    Cabeçalho de tabela que não se repete na página seguinte, título sozinho no
+    pé da folha e nível partido ao meio não são detalhes estéticos: são o que
+    faz alguém conferir a coluna errada.
+    """
+
+    def setUp(self):
+        self.laboratorio = montar_laboratorio("Lab A", "11.111.111/0001-11")
+        self.usuario = Usuario.objects.create_user(
+            username="rt", password="senha-longa-de-teste",
+            laboratorio=self.laboratorio, funcao=Usuario.RESPONSAVEL,
+        )
+        self.estudo = montar_estudo(self.laboratorio, self.usuario)
+        self.client.force_login(self.usuario)
+        self.client.post(reverse("concluir_estudo", args=[self.estudo.pk]))
+        self.corpo = self.client.get(
+            reverse("relatorio_estudo", args=[self.estudo.pk])
+        ).content.decode()
+
+    def test_toda_tabela_tem_cabecalho_que_se_repete(self):
+        # Sem <thead>, a parte da tabela que cai na página seguinte chega sem
+        # nome de coluna: números soltos numa folha de registro de qualidade.
+        #
+        # A folha de estilo cita "<thead>" num comentário, então a contagem
+        # precisa olhar só o corpo do documento.
+        import re
+
+        corpo = re.sub(r"<style>.*?</style>", "", self.corpo, flags=re.S)
+        self.assertGreater(corpo.count("<table"), 0)
+        self.assertEqual(corpo.count("<table"), corpo.count("<thead>"))
+        self.assertIn("display: table-header-group", self.corpo)
+
+    def test_as_secoes_sao_numeradas_automaticamente(self):
+        # Numa auditoria se aponta para "a seção 4", não para "aquela do meio".
+        self.assertIn("counter-reset: secao", self.corpo)
+        self.assertIn("counter-increment: secao", self.corpo)
+
+    def test_titulo_nunca_fica_orfao_no_pe_da_pagina(self):
+        self.assertIn("break-after: avoid", self.corpo)
+        self.assertIn("orphans: 3", self.corpo)
+        self.assertIn("widows: 3", self.corpo)
+
+    def test_um_nivel_nao_parte_ao_meio(self):
+        # A estatística das corridas e a avaliação que sai dela pertencem uma à
+        # outra; metade numa página e metade na outra não se lê.
+        self.assertIn('class="nivel-bloco"', self.corpo)
+        self.assertIn(".nivel-bloco, .veredito-final, .assinatura { break-inside: avoid; }", self.corpo)
+
+    def test_cada_sistema_analitico_leva_a_propria_metodologia(self):
+        # Na grade corrida anterior, "Metodologia" aparecia duas vezes e podia
+        # cair numa linha sozinha, longe do equipamento a que pertencia.
+        self.assertIn("Sistema em teste", self.corpo)
+        self.assertIn("Sistema de comparação", self.corpo)
+        self.assertEqual(self.corpo.count('class="sistema"'), 2)
+
+    def test_a_orientacao_de_impressao_nao_entra_no_papel(self):
+        self.assertIn(
+            ".comandos, .recados, .como-salvar { display: none !important; }", self.corpo
+        )
+
+
+class TestRelatorioQualitativoNaoImprimeCriterioQuantitativo(TestCase):
+    """Um relatório de EP12 não é julgado por CV, bias e erro total.
+
+    O documento imprimia "Desenho da precisão — 5 dias consecutivos, 5 réplicas
+    por dia" num estudo sem réplica nenhuma, e a tabela de erro total, bias e
+    imprecisão ao lado dos resultados — fazendo parecer que o método tinha sido
+    avaliado contra limites que nunca entraram em conta nenhuma.
+    """
+
+    def setUp(self):
+        self.laboratorio = montar_laboratorio("Lab Q", "33.333.333/0001-33")
+        self.usuario = Usuario.objects.create_user(
+            username="rt", password="senha-longa-de-teste",
+            laboratorio=self.laboratorio, funcao=Usuario.RESPONSAVEL,
+        )
+        self.estudo = montar_estudo(self.laboratorio, self.usuario)
+        self.estudo.tipo = Estudo.QUALITATIVO
+        self.estudo.save()
+        self.estudo.niveis.all().delete()
+        self.estudo.amostras_comparacao.all().delete()
+        for indice in range(1, 41):
+            positivo = indice % 2 == 0
+            AmostraQualitativa.objects.create(
+                estudo=self.estudo, identificacao=f"AM-{indice:03d}",
+                resultado_referencia=positivo, resultado_teste=positivo,
+            )
+        self.client.force_login(self.usuario)
+        self.client.post(reverse("concluir_estudo", args=[self.estudo.pk]))
+        self.corpo = self.client.get(
+            reverse("relatorio_estudo", args=[self.estudo.pk])
+        ).content.decode()
+
+    def test_nao_descreve_um_desenho_de_precisao_que_nao_existiu(self):
+        self.assertNotIn("Desenho da precisão", self.corpo)
+
+    def test_nao_imprime_limites_de_metodo_quantitativo(self):
+        self.assertNotIn("Erro total máximo", self.corpo)
+        self.assertNotIn("Bias máximo", self.corpo)
+
+    def test_diz_contra_o_que_o_metodo_foi_avaliado(self):
+        self.assertIn("concordância com o método de referência", self.corpo)
+        self.assertIn("Sensibilidade", self.corpo)
+
+    def test_o_estudo_quantitativo_continua_trazendo_os_limites(self):
+        # Noutro laboratório, com usuário próprio: o analito é único por
+        # laboratório e este já tem um FT4 em soro, e um usuário só enxerga os
+        # estudos do laboratório dele.
+        outro = montar_laboratorio("Lab R", "44.444.444/0001-44")
+        dono = Usuario.objects.create_user(
+            username="rt.outro", password="senha-longa-de-teste",
+            laboratorio=outro, funcao=Usuario.RESPONSAVEL,
+        )
+        quantitativo = montar_estudo(outro, dono)
+        self.client.force_login(dono)
+        self.client.post(reverse("concluir_estudo", args=[quantitativo.pk]))
+
+        corpo = self.client.get(
+            reverse("relatorio_estudo", args=[quantitativo.pk])
+        ).content.decode()
+
+        self.assertIn("Erro total máximo", corpo)
+        self.assertIn("Desenho da precisão", corpo)

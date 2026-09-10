@@ -20,66 +20,190 @@
 
 {% block estilo %}
 <style>
+  /* --- Tipografia e ritmo do documento -------------------------------------
+   *
+   * Um relatório de validação é lido em duas situações: de relance, procurando
+   * uma seção, e devagar, conferindo um número. As duas pedem coisas opostas —
+   * a primeira quer marcos visuais fortes, a segunda quer densidade — e a
+   * versão anterior não servia nenhuma das duas: todas as seções a 20px umas
+   * das outras, com o mesmo peso, e tabelas coladas nos títulos.
+   *
+   * A separação aqui é feita por ESPAÇO, e não por moldura. Cada seção abre com
+   * um filete fino, respira, e o título fica solto acima do conteúdo. É o que
+   * dá o "onde começa o quê" sem encher a página de caixas.
+   */
   .aplicacao { display: block; }
   .folha {
-    max-width: 900px; margin: 0 auto; padding: 26px 30px 60px;
+    max-width: 880px; margin: 0 auto; padding: 30px 34px 70px;
     background: var(--superficie); color: var(--tinta);
+    counter-reset: secao;
   }
 
   .comandos {
-    max-width: 900px; margin: 0 auto; padding: 14px 30px 0;
+    max-width: 880px; margin: 0 auto; padding: 16px 34px 0;
     display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
   }
 
-  .timbre { display: flex; align-items: start; gap: 14px; padding-bottom: 14px; border-bottom: 2px solid var(--tinta); }
+  /* --- Timbre --------------------------------------------------------------- */
+  .timbre {
+    display: flex; align-items: flex-start; gap: 16px;
+    padding-bottom: 18px; border-bottom: 1.5px solid var(--tinta);
+  }
   .timbre .marca {
-    width: 40px; height: 40px; border-radius: 10px; background: var(--tinta); color: var(--superficie);
-    display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 17px; flex-shrink: 0;
+    width: 42px; height: 42px; border-radius: 11px; background: var(--tinta); color: var(--superficie);
+    display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 18px;
+    flex-shrink: 0; font-family: "Instrument Sans", system-ui, sans-serif;
+  }
+  .timbre h1 {
+    font-size: 19px; font-weight: 600; margin: 0; letter-spacing: -0.012em; line-height: 1.25;
+  }
+  .timbre .sub { font-size: 12px; color: var(--tinta-2); margin: 4px 0 0; line-height: 1.5; }
+  .timbre .emissao {
+    text-align: right; flex-shrink: 0; font-size: 10.5px; color: var(--tinta-3);
+    line-height: 1.5; display: flex; flex-direction: column;
+  }
+  .timbre .emissao strong { font-size: 12px; color: var(--tinta-2); font-weight: 600; }
+
+  /* --- Seção ----------------------------------------------------------------
+   *
+   * Filete acima e folga generosa: o olho encontra o começo da seção antes de
+   * ler o título. A numeração é automática e serve à conferência — numa
+   * auditoria se aponta para "a seção 4", não para "aquela do meio".
+   */
+  .bloco {
+    margin-top: 38px; padding-top: 20px; border-top: 1px solid var(--linha);
+    break-inside: auto;
+  }
+  .bloco:first-of-type { margin-top: 26px; padding-top: 0; border-top: none; }
+  .bloco > h2 {
+    font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .09em;
+    color: var(--tinta-3); margin: 0 0 16px; padding: 0; border: none;
+    display: flex; align-items: baseline; gap: 9px;
+    break-after: avoid;
+  }
+  .bloco > h2::before {
+    counter-increment: secao; content: counter(secao);
+    font-size: 11px; font-weight: 700; letter-spacing: 0; color: var(--superficie);
+    background: var(--tinta-3); border-radius: 4px;
+    min-width: 17px; height: 17px; display: inline-flex;
+    align-items: center; justify-content: center; flex-shrink: 0;
     font-family: "Instrument Sans", system-ui, sans-serif;
   }
-  .timbre h1 { font-size: 18px; font-weight: 600; margin: 0; }
-  .timbre .sub { font-size: 12px; color: var(--tinta-2); margin: 2px 0 0; }
 
-  .bloco { margin-top: 20px; break-inside: avoid; }
-  .bloco > h2 {
-    font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em;
-    color: var(--tinta-2); margin: 0 0 8px; padding-bottom: 5px; border-bottom: 1px solid var(--linha);
+  /* Subseção — um nível de controle dentro da faixa de precisão. Nunca parte
+   * ao meio numa quebra de página: metade de uma tabela de nível não se lê. */
+  .nivel-bloco { margin-top: 22px; break-inside: avoid; }
+  .nivel-bloco:first-of-type { margin-top: 0; }
+  .bloco h3 {
+    font-size: 13px; font-weight: 600; margin: 22px 0 3px; break-after: avoid;
   }
-  .bloco h3 { font-size: 13px; font-weight: 600; margin: 14px 0 6px; }
+  .nivel-bloco > h3 { margin-top: 0; }
+  .bloco h3 + .nota { margin: 0 0 10px; }
+  .bloco h3 + table { margin-top: 10px; }
 
-  .par-a-par { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 22px; }
-  .par-a-par > div { display: flex; gap: 8px; font-size: 12.5px; padding: 2px 0; }
-  .par-a-par dt { color: var(--tinta-3); min-width: 150px; flex-shrink: 0; }
-  .par-a-par dd { margin: 0; font-weight: 600; }
+  /* --- Pares rótulo/valor ---------------------------------------------------
+   *
+   * O rótulo sobe para cima do valor e encolhe. Em duas colunas com rótulo à
+   * esquerda de 150px, metade da largura era rótulo cinza e os valores ficavam
+   * espremidos numa coluna estreita; empilhado, o valor recebe a linha inteira
+   * e o bloco todo ocupa menos altura.
+   */
+  .par-a-par {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 15px 26px; margin: 0;
+  }
+  .par-a-par > div { display: block; }
+  .par-a-par dt {
+    font-size: 9.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .07em;
+    color: var(--tinta-3); margin-bottom: 3px;
+  }
+  .par-a-par dd { margin: 0; font-size: 13px; font-weight: 600; line-height: 1.4; }
 
-  table { font-size: 12px; }
-  th, td { padding: 5px 8px; }
+  /* Cartão de sistema analítico: o papel em cima, o aparelho em destaque e os
+   * atributos embaixo. Mantém metodologia e número de série colados ao
+   * equipamento a que pertencem. */
+  .sistemas {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 14px;
+  }
+  .sistema { padding: 14px 16px; background: var(--faixa); border-radius: 8px; break-inside: avoid; }
+  .sistema .papel {
+    font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em;
+    color: var(--tinta-3);
+  }
+  .sistema .aparelho {
+    font-size: 15px; font-weight: 600; margin: 3px 0 10px; letter-spacing: -0.01em;
+    font-family: "Instrument Sans", system-ui, sans-serif;
+  }
+  .atributos { margin: 0; display: grid; gap: 7px; }
+  .atributos > div { display: flex; gap: 10px; font-size: 12px; align-items: baseline; }
+  .atributos dt { color: var(--tinta-3); flex-shrink: 0; min-width: 108px; }
+  .atributos dd { margin: 0; font-weight: 600; }
+
+  /* --- Tabelas --------------------------------------------------------------
+   *
+   * Linha mais alta, sem régua vertical nenhuma, e o cabeçalho repetido em toda
+   * página graças ao <thead>. Antes, uma tabela que atravessava a quebra levava
+   * números sem nome de coluna para a página seguinte.
+   */
+  table { font-size: 12px; margin: 0; }
+  thead { display: table-header-group; }
+  thead th {
+    font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--tinta-3); padding: 0 10px 7px; border-bottom: 1px solid var(--borda);
+  }
+  tbody td, table > tr > td { padding: 9px 10px; border-bottom: 1px solid var(--grade); }
+  table .nota { font-size: 10.5px; line-height: 1.45; margin: 2px 0 0; }
+
+  /* --- Conclusão e veredito -------------------------------------------------
+   *
+   * A conclusão perde a moldura e fica só com o fundo: borda mais fundo é uma
+   * ênfase duplicada. O veredito mantém a caixa porque é a única coisa da
+   * página que precisa ser vista antes de ser lida.
+   */
+  .conclusao {
+    margin: 0; padding: 15px 17px; border: none; border-left: 2px solid var(--linha);
+    background: var(--faixa); font-size: 12.5px; line-height: 1.65; white-space: pre-wrap;
+  }
 
   .veredito-final {
-    margin-top: 20px; padding: 14px 16px; border: 2px solid var(--tinta);
-    border-radius: 8px; display: flex; align-items: center; gap: 14px; break-inside: avoid;
+    margin-top: 30px; padding: 18px 20px; border: 1.5px solid var(--tinta);
+    border-radius: 10px; display: flex; align-items: center; gap: 16px; break-inside: avoid;
+  }
+  .veredito-final .rotulo {
+    font-size: 9.5px; color: var(--tinta-3); text-transform: uppercase;
+    letter-spacing: .09em; font-weight: 700;
   }
   .veredito-final .palavra {
-    font-size: 19px; font-weight: 700; font-family: "Instrument Sans", system-ui, sans-serif;
+    font-size: 21px; font-weight: 700; margin-top: 3px; letter-spacing: -0.015em;
+    font-family: "Instrument Sans", system-ui, sans-serif;
   }
 
-  .conclusao {
-    margin-top: 8px; padding: 13px 15px; border: 1px solid var(--linha); border-radius: 8px;
-    background: var(--faixa); font-size: 12.5px; line-height: 1.6; white-space: pre-wrap;
+  /* --- Assinaturas e rodapé -------------------------------------------------- */
+  .assinatura {
+    margin-top: 46px; display: grid; grid-template-columns: repeat(2, 1fr);
+    gap: 36px; break-inside: avoid;
   }
-
-  .assinatura { margin-top: 34px; display: grid; grid-template-columns: repeat(2, 1fr); gap: 30px; break-inside: avoid; }
-  .assinatura .linha-firma { border-top: 1px solid var(--tinta); padding-top: 6px; font-size: 11.5px; color: var(--tinta-2); }
+  .assinatura .linha-firma {
+    border-top: 1px solid var(--tinta); padding-top: 8px;
+    font-size: 11.5px; color: var(--tinta-2); line-height: 1.55;
+  }
 
   .rodape-doc {
-    margin-top: 26px; padding-top: 12px; border-top: 1px solid var(--linha);
-    font-size: 10.5px; color: var(--tinta-3); line-height: 1.55;
+    margin-top: 34px; padding-top: 14px; border-top: 1px solid var(--linha);
+    font-size: 10px; color: var(--tinta-3); line-height: 1.6; text-align: justify;
   }
 
-  /* A instrução de como salvar. Some na impressão junto com os comandos: ela
-     existe para a tela, e no papel seria ruído dentro do documento. */
+  .grafico { margin: 16px 0 4px; break-inside: avoid; }
+  .grafico svg { max-width: 100%; height: auto; }
+
+  ul.ressalvas { font-size: 12px; line-height: 1.7; padding-left: 17px; margin: 0; list-style: disc; }
+  ul.ressalvas li { padding-left: 3px; }
+  ul.ressalvas li + li { margin-top: 5px; }
+
+  /* --- Instrução de como salvar (só tela) ------------------------------------ */
   .como-salvar {
-    max-width: 820px; margin: 0 auto 14px; padding: 11px 14px;
+    max-width: 880px; margin: 0 auto 16px; padding: 12px 15px;
     background: var(--acento-fundo); border: 1px solid var(--acento-linha);
     border-radius: var(--raio-menor); font-size: 12px; line-height: 1.6; color: var(--tinta-2);
   }
@@ -88,16 +212,27 @@
     padding: 0 4px; font-size: 11px;
   }
 
-  .grafico { margin: 10px 0; break-inside: avoid; }
-  .grafico svg { max-width: 100%; height: auto; }
-
+  /* --- Impressão -------------------------------------------------------------
+   *
+   * O que muda no papel: some o que é da tela, o documento ocupa a folha
+   * inteira, e nenhum título fica órfão no rodapé de uma página.
+   */
   @media print {
-    @page { size: A4; margin: 14mm 12mm 16mm; }
+    @page { size: A4; margin: 15mm 13mm 17mm; }
     body { background: #fff; }
     .comandos, .recados, .como-salvar { display: none !important; }
     .folha { max-width: none; margin: 0; padding: 0; box-shadow: none; }
-    .bloco { break-inside: avoid; }
     a { color: inherit; text-decoration: none; }
+
+    /* Título nunca sozinho no pé da página, parágrafo nunca com uma linha
+     * solta do outro lado da quebra. */
+    h1, h2, h3 { break-after: avoid; page-break-after: avoid; }
+    p, li { orphans: 3; widows: 3; }
+    tr, .nivel-bloco, .veredito-final, .assinatura { break-inside: avoid; }
+
+    /* O filete de seção some junto do espaço quando a seção abre uma página —
+     * o topo da folha já é separação suficiente. */
+    .bloco { margin-top: 30px; padding-top: 16px; }
   }
 </style>
 {% endblock %}
@@ -144,9 +279,10 @@
         {% if estudo.laboratorio.cidade %} &middot; {{ estudo.laboratorio.cidade }}{% if estudo.laboratorio.uf %}/{{ estudo.laboratorio.uf }}{% endif %}{% endif %}
       </p>
     </div>
-    <div style="text-align: right; font-size: 11px; color: var(--tinta-3)">
-      Emitido em {{ emitido_em|date:"d/m/Y H:i" }}<br>
-      por {{ emitido_por.get_full_name|default:emitido_por.username }}
+    <div class="emissao">
+      <span>Emitido em</span>
+      <strong>{{ emitido_em|date:"d/m/Y H:i" }}</strong>
+      <span>por {{ emitido_por.get_full_name|default:emitido_por.username }}</span>
     </div>
   </div>
 
@@ -167,15 +303,38 @@
       <div><dt>Mensurando</dt><dd>{{ estudo.mensurando.nome }} ({{ estudo.mensurando.unidade_medida }})</dd></div>
       <div><dt>Material biológico</dt><dd>{{ estudo.mensurando.material_biologico }}</dd></div>
       <div><dt>Módulo</dt><dd>{{ estudo.modulo_curto }}</dd></div>
+      {% comment %}
+        Estudo qualitativo não tem desenho de precisão: não há réplicas nem CV.
+        O campo saía preenchido com "5 dias, 5 réplicas por dia" num relatório
+        de EP12, descrevendo um experimento que nunca aconteceu.
+      {% endcomment %}
+      {% if tipo != "qualitativo" %}
       <div><dt>Desenho da precisão</dt><dd>{{ estudo.get_desenho_precisao_display }}</dd></div>
+      {% endif %}
       <div><dt>Período</dt><dd>{{ estudo.data_inicio|date:"d/m/Y" }}{% if estudo.data_conclusao %} a {{ estudo.data_conclusao|date:"d/m/Y" }}{% endif %}</dd></div>
     </dl>
   </div>
 
   <div class="bloco">
     <h2>Especificação da qualidade analítica</h2>
+    {% comment %}
+      Erro total, bias e imprecisão são critérios de método quantitativo. Num
+      estudo EP12 eles não entram em conta nenhuma, e imprimi-los ao lado dos
+      resultados fazia o documento parecer afirmar que o método foi julgado
+      contra eles.
+    {% endcomment %}
+    {% if tipo == "qualitativo" %}
+    <p style="font-size: 12.5px; line-height: 1.6; margin: 0">
+      Método qualitativo: o desempenho é avaliado por concordância com o método de
+      referência (sensibilidade, especificidade e kappa), e não por limites de erro
+      total, bias e imprecisão — esses se aplicam a métodos quantitativos. A leitura
+      de cada indicador está na seção de desempenho qualitativo.
+    </p>
+    {% else %}
     <table>
+      <thead>
       <tr><th>Limite</th><th class="n">Valor</th><th>Referência científica</th></tr>
+      </thead>
       <tr>
         <td>Erro total máximo</td>
         <td class="n">{{ estudo.especificacao.erro_total_maximo_pct|default_if_none:"—" }}%</td>
@@ -194,31 +353,53 @@
       </tr>
       {% endfor %}
     </table>
-    <p class="nota" style="margin-top: 7px">
+    <p class="nota" style="margin-top: 9px">
       Nível de significância adotado: α = {{ estudo.especificacao.nivel_significancia }}.
     </p>
+    {% endif %}
   </div>
 
   <div class="bloco">
     <h2>Rastreabilidade</h2>
-    <dl class="par-a-par">
-      <div><dt>Sistema em teste</dt><dd>{{ estudo.sistema_teste.equipamento }} — nº {{ estudo.sistema_teste.numero_serie }}</dd></div>
-      <div><dt>Metodologia</dt><dd>{{ estudo.sistema_teste.metodologia }}</dd></div>
+    {% comment %}
+      Um cartão por sistema analítico, e não uma grade corrida de rótulos. Na
+      grade, "Metodologia" aparecia duas vezes e podia cair numa linha sozinha,
+      longe do equipamento a que pertencia — quem lê não tinha como saber qual
+      metodologia era de qual sistema.
+    {% endcomment %}
+    <div class="sistemas">
+      <div class="sistema">
+        <div class="papel">Sistema em teste</div>
+        <div class="aparelho">{{ estudo.sistema_teste.equipamento }}</div>
+        <dl class="atributos">
+          <div><dt>Número de série</dt><dd>{{ estudo.sistema_teste.numero_serie }}</dd></div>
+          <div><dt>Metodologia</dt><dd>{{ estudo.sistema_teste.metodologia }}</dd></div>
+          {% if reagentes.teste.tem_intervalo %}
+          <div><dt>Intervalo analítico</dt><dd>{{ reagentes.teste.intervalo_escrito }} &middot; lote {{ reagentes.teste.lote }}</dd></div>
+          {% endif %}
+        </dl>
+      </div>
+
       {% if estudo.sistema_comparacao %}
-      <div><dt>Sistema de comparação</dt><dd>{{ estudo.sistema_comparacao.equipamento }} — nº {{ estudo.sistema_comparacao.numero_serie }}</dd></div>
-      <div><dt>Metodologia</dt><dd>{{ estudo.sistema_comparacao.metodologia }}</dd></div>
+      <div class="sistema">
+        <div class="papel">Sistema de comparação</div>
+        <div class="aparelho">{{ estudo.sistema_comparacao.equipamento }}</div>
+        <dl class="atributos">
+          <div><dt>Número de série</dt><dd>{{ estudo.sistema_comparacao.numero_serie }}</dd></div>
+          <div><dt>Metodologia</dt><dd>{{ estudo.sistema_comparacao.metodologia }}</dd></div>
+          {% if reagentes.comparacao.tem_intervalo %}
+          <div><dt>Intervalo analítico</dt><dd>{{ reagentes.comparacao.intervalo_escrito }} &middot; lote {{ reagentes.comparacao.lote }}</dd></div>
+          {% endif %}
+        </dl>
+      </div>
       {% endif %}
-      {% if reagentes.teste.tem_intervalo %}
-      <div><dt>Intervalo analítico (teste)</dt><dd>{{ reagentes.teste.intervalo_escrito }} — lote {{ reagentes.teste.lote }}</dd></div>
-      {% endif %}
-      {% if reagentes.comparacao.tem_intervalo %}
-      <div><dt>Intervalo analítico (comparação)</dt><dd>{{ reagentes.comparacao.intervalo_escrito }} — lote {{ reagentes.comparacao.lote }}</dd></div>
-      {% endif %}
-    </dl>
+    </div>
 
     <h3>Insumos</h3>
     <table>
+      <thead>
       <tr><th>Item</th><th>Nome</th><th>Lote</th><th class="n">Validade</th></tr>
+      </thead>
       {% for reagente in estudo.sistema_teste.reagentes.all %}
       <tr><td>Reagente</td><td>{{ reagente.nome }}</td><td>{{ reagente.lote }}</td><td class="n">{{ reagente.validade|date:"d/m/Y" }}</td></tr>
       {% endfor %}
@@ -239,12 +420,23 @@
   {% if precisao %}
   <div class="bloco">
     <h2>Precisão e exatidão</h2>
+    {% comment %}
+      Cada nível é um bloco fechado: a estatística das corridas e a avaliação
+      que sai dela pertencem uma à outra, e metade de um nível numa página e
+      metade na seguinte não se lê.
+    {% endcomment %}
     {% for item in precisao %}
+    <div class="nivel-bloco">
     <h3>
       Nível {{ item.numero }} — {{ item.nivel.controle.nome }} (lote {{ item.nivel.controle.lote }})
     </h3>
-    <table style="margin-bottom: 8px">
+    <p class="nota">
+      Limites resolvidos em {{ item.concentracao|floatformat:"-4" }} ({{ item.origem_da_concentracao }})
+    </p>
+    <table style="margin-bottom: 14px">
+      <thead>
       <tr><th>Corrida</th><th class="n">n</th><th class="n">Média intracorrida</th><th class="n">Desvio padrão</th><th class="n">CV</th></tr>
+      </thead>
       {% for corrida in item.estatistica.corridas %}
       <tr>
         <td>{{ corrida.corrida }}</td><td class="n">{{ corrida.n }}</td>
@@ -268,7 +460,13 @@
         situação. E cada indicador vem nomeado do serviço — varrendo a lista
         aqui dentro, a linha perdia duas colunas quando o indicador não existia.
       {% endcomment %}
+      <colgroup>
+        <col style="width: 31%"><col style="width: 12%"><col style="width: 25%">
+        <col style="width: 20%"><col style="width: 12%">
+      </colgroup>
+      <thead>
       <tr><th>Avaliação</th><th class="n">Obtido</th><th class="n">Comparação</th><th class="n">Limite</th><th>Situação</th></tr>
+      </thead>
       {% if item.indicador_imprecisao %}
       <tr>
         <td>Precisão — {{ item.estatistica.tipo_cv_aplicavel|default:"CV" }}</td>
@@ -325,6 +523,7 @@
       <tr><td>Exatidão</td><td colspan="4">Não avaliada — média interlaboratorial não informada.</td></tr>
       {% endif %}
     </table>
+    </div>
     {% endfor %}
 
     {% for grafico in graficos.levey_jennings %}
@@ -338,7 +537,9 @@
   <div class="bloco">
     <h2>Comparabilidade — {{ c.n }} amostras pareadas</h2>
     <table>
+      <thead>
       <tr><th>Medida</th><th class="n">Resultado</th><th>Leitura</th></tr>
+      </thead>
       <tr>
         <td>Razão das médias{% if c.razao_avaliacao.status %} — <strong>{{ c.razao_avaliacao.status }}</strong>{% endif %}</td>
         <td class="n"><strong>{{ c.razao_das_medias.desvio_pct|floatformat:2|default:"—" }}%</strong></td>
@@ -400,10 +601,12 @@
     {% if qualitativo.tem_dados %}
     {% with d=qualitativo.desempenho t=qualitativo.tabela %}
     <table>
+      <thead>
       <tr>
         <th>Referência \ Método em teste</th>
         <th class="n">Reagente</th><th class="n">Não reagente</th><th class="n">Total</th>
       </tr>
+      </thead>
       <tr>
         <td>Reagente</td>
         <td class="n">{{ t.verdadeiros_positivos }}</td>
@@ -424,7 +627,9 @@
     </table>
 
     <table style="margin-top: 10px">
+      <thead>
       <tr><th>Indicador</th><th class="n">Valor</th><th class="n">IC 95%</th><th>Leitura</th></tr>
+      </thead>
       <tr>
         <td>Sensibilidade</td>
         <td class="n">{{ d.sensibilidade_pct|floatformat:1|default:"—" }}%</td>
@@ -470,7 +675,7 @@
   {% if avisos %}
   <div class="bloco">
     <h2>Ressalvas</h2>
-    <ul style="font-size: 12px; line-height: 1.6; padding-left: 18px; list-style: disc">
+    <ul class="ressalvas">
       {% for aviso in avisos %}<li>{{ aviso }}</li>{% endfor %}
     </ul>
   </div>

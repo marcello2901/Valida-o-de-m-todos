@@ -17,11 +17,13 @@
     {% if indicador.referencia %}<br>{{ indicador.referencia }}{% endif %}
   </div>
 {% elif indicador.limite_pct is not None %}
+  {% comment %}
+    Na regra percentual o critério é a porcentagem, e só ela. O equivalente em
+    unidade de medida, mostrado ao lado, era um segundo número na mesma célula
+    que ninguém pediu e que se confunde com o próprio limite.
+  {% endcomment %}
   &plusmn; {{ indicador.limite_pct|floatformat:2 }}%
-  <div class="nota">
-    {{ rotulo|default:"limite da ficha" }}
-    {% if indicador.limite_absoluto %}&middot; {{ indicador.limite_absoluto|com_menos:4 }} {{ unidade }}{% endif %}
-  </div>
+  <div class="nota">{{ rotulo|default:"limite da ficha" }}</div>
 {% else %}
   <span style="color: var(--atencao-tinta)">sem limite</span>
 {% endif %}
