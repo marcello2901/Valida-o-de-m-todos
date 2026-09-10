@@ -101,7 +101,8 @@
     <strong>Shift+clique</strong> para marcar um retângulo ou
     <strong>Ctrl+clique</strong> (Cmd no Mac) para marcar avulsas. Depois
     <strong>Delete</strong>, ou o botão que aparece no rodapé. Limpar não apaga
-    do estudo &mdash; quem apaga é o salvar.
+    do estudo &mdash; quem apaga é o salvar, e <strong>Ctrl+Z</strong> devolve o
+    que foi limpo ou colado por engano.
   </p>
   <p class="aviso-colagem" data-recado-grade hidden></p>
 
@@ -150,11 +151,12 @@
           </div>
 
           {% comment %}
-            Remover o nível apaga as réplicas junto, e isso não se desfaz —
-            diferente de excluir uma réplica, que fica no banco com
-            justificativa e sai riscada no anexo do relatório. Por isso o botão
-            fica atrás de uma abertura, e o número de medições que somem é dito
-            antes da pergunta, não depois do clique.
+            Remover o nível apaga as réplicas junto — diferente de excluir uma
+            réplica, que fica no banco com justificativa e sai riscada no anexo
+            do relatório. O retrocesso da sessão desfaz o clique imediato, mas é
+            um passo só e morre com a sessão. Por isso o botão continua atrás de
+            uma abertura, e o número de medições que somem é dito antes da
+            pergunta, não depois do clique.
 
             O identificador do nível viaja no próprio botão: só o botão clicado
             é enviado, então não é preciso JavaScript para saber qual coluna
@@ -165,7 +167,8 @@
             <p class="nota">
               {% if coluna.total_replicas %}
                 Apaga o nível e as <strong>{{ coluna.total_replicas }} réplica{{ coluna.total_replicas|pluralize }}</strong>
-                lançadas nele. Não há como desfazer.
+                lançadas nele. Dá para desfazer logo em seguida, enquanto você
+                estiver nesta sessão &mdash; depois, não.
               {% else %}
                 Este nível ainda não tem réplica lançada.
               {% endif %}

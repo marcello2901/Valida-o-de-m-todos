@@ -243,8 +243,20 @@
   }
   .recado--error { border-color: #f0cccc; background: #fdf3f3; color: #7a1f1f; }
 
+  /* Faixa do desfazer. Neutra de propósito: não é erro nem sucesso, é uma
+     saída oferecida a quem acabou de apagar alguma coisa. */
+  .recado--desfazer { border-color: var(--borda); background: var(--faixa); align-items: center; }
+  .recado--desfazer .cresce { flex: 1; }
+  .recado--desfazer kbd {
+    font: inherit; font-size: 11.5px; font-weight: 600; padding: 1px 5px;
+    border: 1px solid var(--borda); border-bottom-width: 2px; border-radius: 4px;
+    background: var(--superficie); color: var(--tinta-2);
+  }
+
   @media print {
-    .trilho, .barra .botao { display: none; }
+    /* A faixa do desfazer é oferta de ação, não conteúdo: no papel só ocuparia
+       espaço e confundiria quem lesse a folha meses depois. */
+    .trilho, .barra .botao, .recado--desfazer { display: none; }
     body { background: #fff; }
   }
 </style>
@@ -302,6 +314,33 @@
       {% endfor %}
     </div>
     {% endif %}
+    {% comment %}
+      Desfazer a última gravação que apagou ou trocou dado bruto. Aparece em
+      qualquer tela do estudo, porque quem percebe o engano raramente está na
+      tela onde o cometeu — vê o número errado no resultado e quer voltar dali.
+
+      É formulário, não link: a ação escreve no banco. E vive fora do bloco de
+      mensagens porque sobrevive à navegação — a mensagem some no primeiro
+      recarregamento, a oferta de desfazer fica até ser usada ou substituída.
+    {% endcomment %}
+    {% if retrocesso %}
+    <div class="recados">
+      <form method="post" action="{% url 'desfazer_estudo' retrocesso.estudo %}"
+            class="recado recado--desfazer" data-desfazer-gravado
+            data-descricao="{{ retrocesso.descricao }}">
+        {% csrf_token %}
+        <input type="hidden" name="voltar" value="{{ request.get_full_path }}">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></svg>
+        <span class="cresce">
+          A última gravação{% if retrocesso.estudo_nome %} em
+          <strong>{{ retrocesso.estudo_nome }}</strong>{% endif %}
+          {{ retrocesso.descricao }}.
+          <kbd>Ctrl</kbd>+<kbd>Z</kbd> devolve o estudo ao estado anterior.
+        </span>
+        <button type="submit" class="botao">Desfazer</button>
+      </form>
+    </div>
+    {% endif %}
     {% block corpo %}{% endblock %}
   </div>
 </div>
@@ -309,7 +348,11 @@
   O programa não usa JavaScript para funcionar. As telas que carregam algo aqui
   ganham uma conveniência a mais — colar da planilha — e continuam completas
   sem ela.
+
+  O desfazer entra em todas: sem ele o botão continua clicável, só perde o
+  atalho de teclado.
 {% endcomment %}
+<script src="{% static 'js/desfazer.js' %}"></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

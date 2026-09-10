@@ -2618,13 +2618,318 @@ class TestRecorteDaRegressao(TestCase):
         self.assertIsNone(resposta.context.get("recorte_em_exame"))
 
 
+class TestDesfazerUltimaGravacao(TestCase):
+    """O passo atrás depois de um salvar que apagou ou trocou dado bruto.
+
+    Um retrato do estado anterior fica na sessão de quem gravou e vale por uma
+    desfeita só. Duas regras carregam o resto:
+
+    - só gravação destrutiva guarda retrato — digitar réplica nova não precisa
+      de desfazer, e oferecer o botão sempre viraria ruído;
+    - toda gravação passa pelo guardador, que substitui o retrato ou o joga
+      fora. Retrato velho restauraria um estado que já não é o anterior, e
+      apagaria justamente o que foi digitado depois.
+    """
+
+    def setUp(self):
+        self.laboratorio = montar_laboratorio("Lab A", "11.111.111/0001-11")
+        self.usuario = Usuario.objects.create_user(
+            username="analista", password="senha-longa-de-teste",
+            laboratorio=self.laboratorio, funcao=Usuario.ANALISTA,
+        )
+        self.estudo = montar_estudo(self.laboratorio, self.usuario)
+        self.nivel = self.estudo.niveis.get(numero=1)
+        self.replicas = self.estudo.niveis.get(numero=1).replicas.count()
+        self.grade = reverse("replicas_estudo", args=[self.estudo.pk])
+        self.pareadas = reverse("amostras_estudo", args=[self.estudo.pk])
+        self.desfazer = reverse("desfazer_estudo", args=[self.estudo.pk])
+        self.resultado = reverse("resultado_estudo", args=[self.estudo.pk])
+        self.client.force_login(self.usuario)
+
+    # --- Formulários que imitam a tela ---------------------------------------
+
+    def _grade_vazia(self) -> dict:
+        campos = {
+            f"nivel_{self.nivel.pk}_{posicao}": ""
+            for posicao in range(1, servicos.REPLICAS_POR_COLUNA + 1)
+        }
+        campos[f"alvo_{self.nivel.pk}"] = ""
+        campos[f"provedor_{self.nivel.pk}"] = ""
+        return campos
+
+    def _amostras_vazias(self) -> dict:
+        campos = {"total": servicos.MINIMO_AMOSTRAS_GRADE}
+        for posicao in range(1, servicos.MINIMO_AMOSTRAS_GRADE + 1):
+            campos[f"amostra_{posicao}_id"] = ""
+            campos[f"amostra_{posicao}_comparacao"] = ""
+            campos[f"amostra_{posicao}_teste"] = ""
+        return campos
+
+    # --- Réplicas -------------------------------------------------------------
+
+    def test_apagar_a_grade_inteira_oferece_o_desfazer(self):
+        resposta = self.client.post(self.grade, self._grade_vazia(), follow=True)
+
+        self.assertEqual(self.nivel.replicas.count(), 0)
+        self.assertIsNotNone(resposta.context["retrocesso"])
+        self.assertContains(resposta, "Desfazer")
+        self.assertContains(resposta, f"apagou {self.replicas} réplica")
+
+    def test_desfazer_devolve_as_replicas_com_os_mesmos_valores(self):
+        antes = list(
+            self.nivel.replicas.order_by("corrida", "sequencia").values_list(
+                "corrida", "sequencia", "valor"
+            )
+        )
+
+        self.client.post(self.grade, self._grade_vazia())
+        self.client.post(self.desfazer)
+
+        depois = list(
+            Replica.objects.filter(nivel__estudo=self.estudo)
+            .order_by("corrida", "sequencia")
+            .values_list("corrida", "sequencia", "valor")
+        )
+        self.assertEqual(depois, antes)
+
+    def test_trocar_valor_ja_lancado_tambem_oferece_desfazer(self):
+        campos = self._grade_vazia()
+        original = self.nivel.replicas.order_by("corrida", "sequencia").first()
+        campos[f"nivel_{self.nivel.pk}_1"] = "9,99"
+
+        resposta = self.client.post(self.grade, campos, follow=True)
+
+        self.assertContains(resposta, "trocou o valor de 1 réplica")
+
+        self.client.post(self.desfazer)
+        voltou = Replica.objects.get(nivel__estudo=self.estudo, corrida=1, sequencia=1)
+        self.assertEqual(voltou.valor, original.valor)
+
+    def test_gravacao_que_so_acrescenta_nao_oferece_desfazer(self):
+        # Posição 26 está vazia no fixture: preenchê-la não destrói nada, e
+        # quem digitou apaga o campo se errou.
+        campos = {f"nivel_{self.nivel.pk}_26": "1,40"}
+
+        resposta = self.client.post(self.grade, campos, follow=True)
+
+        self.assertIsNone(resposta.context["retrocesso"])
+        self.assertNotContains(resposta, "data-desfazer-gravado")
+
+    def test_uma_gravacao_nova_joga_fora_o_retrato_anterior(self):
+        # Sem isto o desfazer restauraria o estado de duas gravações atrás e
+        # apagaria a réplica digitada depois — a perda que ele evita.
+        self.client.post(self.grade, self._grade_vazia())
+        self.client.post(self.grade, {f"nivel_{self.nivel.pk}_1": "1,40"})
+
+        resposta = self.client.post(self.desfazer, follow=True)
+
+        self.assertContains(resposta, "Não há nada para desfazer")
+        self.assertEqual(Replica.objects.filter(nivel__estudo=self.estudo).count(), 1)
+
+    def test_o_desfazer_vale_por_um_passo_so(self):
+        self.client.post(self.grade, self._grade_vazia())
+        self.client.post(self.desfazer)
+
+        resposta = self.client.post(self.desfazer, follow=True)
+
+        self.assertContains(resposta, "Não há nada para desfazer")
+        self.assertEqual(
+            Replica.objects.filter(nivel__estudo=self.estudo).count(), self.replicas
+        )
+
+    def test_trocar_a_media_interlaboratorial_preenchida_oferece_desfazer(self):
+        self.nivel.media_interlaboratorial = Decimal("1.30")
+        self.nivel.save(update_fields=["media_interlaboratorial"])
+        campos = {f"alvo_{self.nivel.pk}": "1,80", f"provedor_{self.nivel.pk}": ""}
+
+        resposta = self.client.post(self.grade, campos, follow=True)
+
+        self.assertContains(resposta, "trocou a média interlaboratorial")
+
+        self.client.post(self.desfazer)
+        self.nivel.refresh_from_db()
+        self.assertEqual(self.nivel.media_interlaboratorial, Decimal("1.30"))
+
+    # --- Nível de controle ----------------------------------------------------
+
+    def test_desfazer_devolve_o_nivel_removido_e_as_replicas(self):
+        self.client.post(self.grade, {"remover_nivel": self.nivel.pk})
+        self.assertEqual(self.estudo.niveis.count(), 0)
+
+        self.client.post(self.desfazer)
+
+        nivel = self.estudo.niveis.get(numero=1)
+        self.assertEqual(nivel.controle, self.nivel.controle)
+        self.assertEqual(nivel.replicas.count(), self.replicas)
+
+    def test_acrescentar_nivel_joga_fora_o_retrato(self):
+        # A restauração apaga o que não estava no retrato: sem descartá-lo, o
+        # desfazer levaria junto a coluna criada depois.
+        outro = Controle.objects.create(
+            sistema=self.estudo.sistema_teste, mensurando=self.estudo.mensurando,
+            nivel=2, nome="Controle 2", lote="L2", validade=date(2027, 1, 1),
+        )
+        self.client.post(self.grade, {"remover_nivel": self.nivel.pk})
+        self.client.post(
+            self.grade, {"acao": "adicionar_nivel", "controle": outro.pk}
+        )
+
+        resposta = self.client.post(self.desfazer, follow=True)
+
+        self.assertContains(resposta, "Não há nada para desfazer")
+        self.assertEqual(self.estudo.niveis.count(), 1)
+
+    # --- Amostras pareadas ----------------------------------------------------
+
+    def test_desfazer_devolve_as_amostras_pareadas(self):
+        antes = list(
+            self.estudo.amostras_comparacao.order_by("pk").values_list(
+                "identificacao", "valor_comparacao", "valor_teste"
+            )
+        )
+
+        self.client.post(self.pareadas, self._amostras_vazias())
+        self.assertEqual(self.estudo.amostras_comparacao.count(), 0)
+
+        self.client.post(self.desfazer)
+
+        depois = list(
+            self.estudo.amostras_comparacao.order_by("pk").values_list(
+                "identificacao", "valor_comparacao", "valor_teste"
+            )
+        )
+        self.assertEqual(depois, antes)
+
+    # --- Amostras qualitativas ------------------------------------------------
+
+    def test_desfazer_devolve_as_amostras_qualitativas(self):
+        self.estudo.tipo = Estudo.QUALITATIVO
+        self.estudo.save(update_fields=["tipo"])
+        tela = reverse("qualitativas_estudo", args=[self.estudo.pk])
+
+        lancamento = {"total": servicos.MINIMO_AMOSTRAS_QUALITATIVAS}
+        for posicao in range(1, 4):
+            lancamento[f"amostra_{posicao}_id"] = f"AM-{posicao:03d}"
+            lancamento[f"amostra_{posicao}_referencia"] = "Reagente"
+            lancamento[f"amostra_{posicao}_teste"] = "Não reagente"
+        self.client.post(tela, lancamento)
+        self.assertEqual(self.estudo.amostras_qualitativas.count(), 3)
+
+        vazio = {"total": servicos.MINIMO_AMOSTRAS_QUALITATIVAS}
+        for posicao in range(1, 4):
+            vazio[f"amostra_{posicao}_id"] = ""
+            vazio[f"amostra_{posicao}_referencia"] = ""
+            vazio[f"amostra_{posicao}_teste"] = ""
+        self.client.post(tela, vazio)
+        self.assertEqual(self.estudo.amostras_qualitativas.count(), 0)
+
+        self.client.post(self.desfazer)
+
+        voltaram = list(
+            self.estudo.amostras_qualitativas.order_by("pk").values_list(
+                "identificacao", "resultado_referencia", "resultado_teste"
+            )
+        )
+        self.assertEqual(
+            voltaram,
+            [("AM-001", True, False), ("AM-002", True, False), ("AM-003", True, False)],
+        )
+
+    # --- Trilha, limites e isolamento -----------------------------------------
+
+    def test_a_desfeita_vai_para_a_trilha_de_auditoria(self):
+        self.client.post(self.grade, self._grade_vazia())
+
+        self.client.post(self.desfazer)
+
+        registro = RegistroAuditoria.objects.get(
+            acao="desfez a última alteração de dado bruto"
+        )
+        self.assertEqual(registro.usuario, self.usuario)
+        self.assertEqual(registro.objeto, self.estudo.identificacao)
+        self.assertIn("réplica", registro.detalhe["desfeito"])
+
+    def test_estudo_liberado_nao_desfaz(self):
+        self.client.post(self.grade, self._grade_vazia())
+        self.estudo.situacao = Estudo.LIBERADO
+        self.estudo.save(update_fields=["situacao"])
+
+        resposta = self.client.post(self.desfazer, follow=True)
+
+        self.assertContains(resposta, "não aceita alteração de dado bruto")
+        self.assertEqual(Replica.objects.filter(nivel__estudo=self.estudo).count(), 0)
+
+    def test_o_retrato_de_um_estudo_nao_aparece_em_outro(self):
+        outro = Estudo.objects.create(
+            laboratorio=self.laboratorio, identificacao="Outra validação",
+            modulo=Assinatura.COMPLETO, mensurando=self.estudo.mensurando,
+            sistema_teste=self.estudo.sistema_teste,
+            sistema_comparacao=self.estudo.sistema_comparacao,
+            especificacao=self.estudo.especificacao, criado_por=self.usuario,
+        )
+        self.client.post(self.grade, self._grade_vazia())
+
+        resposta = self.client.get(reverse("resultado_estudo", args=[outro.pk]))
+
+        self.assertIsNone(resposta.context["retrocesso"])
+
+    def test_o_quadro_oferece_o_desfazer_e_diz_de_qual_estudo(self):
+        # Quem apagou sem querer costuma perceber depois de sair da tela de
+        # lançamento, e o quadro é para onde se volta.
+        self.client.post(self.grade, self._grade_vazia())
+
+        resposta = self.client.get(reverse("quadro"))
+
+        self.assertIsNotNone(resposta.context["retrocesso"])
+        self.assertContains(resposta, self.estudo.identificacao)
+        self.assertContains(resposta, "data-desfazer-gravado")
+
+    def test_o_quadro_de_outro_laboratorio_nao_ve_o_retrato(self):
+        vizinho = montar_laboratorio("Lab B", "22.222.222/0001-22")
+        dono = Usuario.objects.create_user(
+            username="vizinho", password="senha-longa-de-teste", laboratorio=vizinho
+        )
+        self.client.post(self.grade, self._grade_vazia())
+
+        # A sessão é outra, mas a checagem que vale é a do quadro: mesmo que o
+        # retrato chegasse aqui, o estudo não está na lista deste usuário.
+        self.client.force_login(dono)
+        resposta = self.client.get(reverse("quadro"))
+
+        self.assertIsNone(resposta.context["retrocesso"])
+
+    def test_desfazer_estudo_de_outro_laboratorio_e_recusado(self):
+        vizinho = montar_laboratorio("Lab B", "22.222.222/0001-22")
+        dono = Usuario.objects.create_user(
+            username="vizinho", password="senha-longa-de-teste", laboratorio=vizinho
+        )
+        alheio = montar_estudo(vizinho, dono)
+
+        resposta = self.client.post(reverse("desfazer_estudo", args=[alheio.pk]))
+
+        self.assertEqual(resposta.status_code, 404)
+
+    def test_o_desfazer_nao_atende_get(self):
+        # Escrita em link seria disparada por pré-carregamento do navegador.
+        self.assertEqual(self.client.get(self.desfazer).status_code, 405)
+
+    def test_endereco_de_volta_para_fora_do_programa_e_ignorado(self):
+        self.client.post(self.grade, self._grade_vazia())
+
+        resposta = self.client.post(
+            self.desfazer, {"voltar": "https://exemplo-invasor.test/"}
+        )
+
+        self.assertEqual(resposta["Location"], self.resultado)
+
+
 class TestRemoverNivelDeControle(TestCase):
     """Apagar uma coluna da grade de réplicas.
 
-    É destrutivo e não se desfaz — diferente de excluir uma réplica, que fica
-    no banco com justificativa e sai riscada no anexo. Por isso o que sumiu
-    precisa ficar registrado, e a tela precisa dizer o número antes de
-    perguntar.
+    É destrutivo — diferente de excluir uma réplica, que fica no banco com
+    justificativa e sai riscada no anexo. O retrocesso da sessão desfaz o
+    clique imediato, e só ele; por isso o que sumiu precisa ficar registrado, e
+    a tela precisa dizer o número antes de perguntar.
     """
 
     def setUp(self):
@@ -2693,7 +2998,7 @@ class TestRemoverNivelDeControle(TestCase):
         resposta = self.client.get(self.url)
 
         self.assertContains(resposta, "Remover este nível")
-        self.assertContains(resposta, "Não há como desfazer")
+        self.assertContains(resposta, f"{self.nivel.replicas.count()} réplica")
         self.assertContains(resposta, f'value="{self.nivel.pk}"')
 
     def test_salvar_a_grade_nao_remove_nada(self):

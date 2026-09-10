@@ -131,13 +131,23 @@
     function esvaziar() {
       if (!selecionados.length) return;
       var quantos = selecionados.length;
+
+      // Guarda como estava antes de limpar: é exatamente o gesto que o Ctrl+Z
+      // precisa alcançar, e o desfazer do navegador não enxerga.
+      if (window.Desfazer) {
+        window.Desfazer.registrar(
+          "limpeza de " + quantos + (quantos === 1 ? " campo" : " campos"),
+          window.Desfazer.retrato(selecionados)
+        );
+      }
+
       selecionados.forEach(function (campo) {
         campo.value = "";
       });
       avisar(
         quantos +
           (quantos === 1 ? " campo limpo" : " campos limpos") +
-          " — nada foi apagado do estudo ainda. Clique em salvar para valer."
+          " — nada foi apagado do estudo ainda. Ctrl+Z devolve; salvar grava."
       );
       limpar();
     }

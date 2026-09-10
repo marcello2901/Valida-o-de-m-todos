@@ -1121,6 +1121,7 @@ def salvar_grade(estudo, dados) -> dict:
     erros: list[str] = []
     gravadas = 0
     apagadas = 0
+    sobrescritas = 0
 
     with transaction.atomic():
         for nivel in estudo.niveis.all():
@@ -1160,13 +1161,19 @@ def salvar_grade(estudo, dados) -> dict:
                         existente.valor = valor
                         existente.save(update_fields=["valor"])
                         gravadas += 1
+                        sobrescritas += 1
                 else:
                     Replica.objects.create(
                         nivel=nivel, corrida=corrida, sequencia=sequencia, valor=valor
                     )
                     gravadas += 1
 
-    return {"gravadas": gravadas, "apagadas": apagadas, "erros": erros}
+    return {
+        "gravadas": gravadas,
+        "apagadas": apagadas,
+        "sobrescritas": sobrescritas,
+        "erros": erros,
+    }
 
 
 def acrescentar_nivel(estudo, controle_id: str, media_alvo: str = "") -> str:
@@ -1207,17 +1214,339 @@ def acrescentar_nivel(estudo, controle_id: str, media_alvo: str = "") -> str:
     return ""
 
 
-def remover_nivel(estudo, usuario, nivel_id: str) -> str:
+# --- Desfazer a última escrita destrutiva -----------------------------------
+#
+# O lançamento é o lugar onde se apaga dado sem querer: uma seleção grande, um
+# Delete, um salvar. A trilha de auditoria registra que aconteceu, mas registrar
+# não devolve a medição.
+#
+# O retrocesso é um retrato do estado ANTERIOR, tirado antes de a escrita
+# acontecer, guardado na sessão de quem escreveu e válido para uma única
+# desfeita. Não é histórico: é o passo atrás imediato, do tamanho de "cliquei
+# errado". Guardar mais do que isso viraria um segundo histórico ao lado da
+# trilha, com duas versões da verdade sobre o que aconteceu com o estudo.
+#
+# Duas regras que a implementação inteira depende:
+#
+#   1. Só escrita DESTRUTIVA guarda retrato — a que apagou ou sobrescreveu
+#      alguma coisa. Digitar réplica nova não precisa de desfazer: quem digitou
+#      apaga o campo. Oferecer o botão em toda gravação o transformaria em
+#      ruído, e ruído é o que faz alguém clicar sem ler.
+#
+#   2. Toda escrita, destrutiva ou não, passa por ``guardar_retrocesso``, que
+#      substitui o retrato antigo ou o joga fora. Retrato velho é armadilha:
+#      restaurar o estado de duas gravações atrás apagaria tudo o que foi
+#      digitado depois — o próprio desfazer viraria a perda de dado que ele
+#      existe para evitar.
+#
+# O que ele NÃO cobre, de propósito: veredito, análise crítica e liberação. Um
+# relatório assinado não se desfaz com Ctrl+Z — cancela-se o estudo e abre-se
+# outro, que é o caminho que deixa rastro.
+
+CHAVE_RETROCESSO = "retrocesso"
+
+
+def _retrato_das_replicas(estudo) -> list[dict]:
+    from .models import Replica
+
+    return [
+        {
+            "nivel": replica.nivel_id,
+            "corrida": replica.corrida,
+            "sequencia": replica.sequencia,
+            "valor": str(replica.valor),
+            "excluida": replica.excluida,
+            "justificativa": replica.justificativa_exclusao,
+        }
+        for replica in Replica.objects.filter(nivel__estudo=estudo).order_by("pk")
+    ]
+
+
+def _retrato_dos_niveis(estudo) -> list[dict]:
+    return [
+        {
+            "pk": nivel.pk,
+            "numero": nivel.numero,
+            "controle": nivel.controle_id,
+            "media": str(nivel.media_interlaboratorial)
+            if nivel.media_interlaboratorial is not None
+            else None,
+            "provedor": nivel.provedor_interlaboratorial,
+        }
+        for nivel in estudo.niveis.all().order_by("numero")
+    ]
+
+
+def _retrato_das_amostras(estudo) -> list[dict]:
+    return [
+        {
+            "identificacao": amostra.identificacao,
+            "comparacao": str(amostra.valor_comparacao),
+            "teste": str(amostra.valor_teste),
+            "excluida": amostra.excluida,
+            "justificativa": amostra.justificativa_exclusao,
+        }
+        for amostra in estudo.amostras_comparacao.all().order_by("pk")
+    ]
+
+
+def _retrato_das_qualitativas(estudo) -> list[dict]:
+    return [
+        {
+            "identificacao": amostra.identificacao,
+            "referencia": amostra.resultado_referencia,
+            "teste": amostra.resultado_teste,
+        }
+        for amostra in estudo.amostras_qualitativas.all().order_by("pk")
+    ]
+
+
+RETRATISTAS = {
+    "replicas": lambda estudo: {
+        "niveis": _retrato_dos_niveis(estudo),
+        "replicas": _retrato_das_replicas(estudo),
+    },
+    "amostras": lambda estudo: {"amostras": _retrato_das_amostras(estudo)},
+    "qualitativas": lambda estudo: {"amostras": _retrato_das_qualitativas(estudo)},
+}
+
+
+def tirar_retrato(estudo, tipo: str) -> dict:
+    """Fotografa o dado bruto antes de a escrita acontecer.
+
+    Fica em memória, na requisição. Só vai para a sessão se a escrita que vier
+    depois destruir alguma coisa — quem decide isso é ``guardar_retrocesso``.
+    """
+    return {"tipo": tipo, "dados": RETRATISTAS[tipo](estudo)}
+
+
+def descartar_retrocesso(sessao) -> None:
+    """Joga fora o retrato guardado.
+
+    Toda gravação que não guarda um retrato novo precisa chamar isto. Retrato
+    velho é armadilha: restaurar o estado de duas gravações atrás apagaria o
+    que foi digitado depois — o desfazer viraria a perda de dado que ele existe
+    para evitar.
+    """
+    if sessao.pop(CHAVE_RETROCESSO, None) is not None:
+        sessao.modified = True
+
+
+def guardar_retrocesso(sessao, estudo, retrato, descricao: str, destrutiva: bool) -> bool:
+    """Guarda o retrato para uma desfeita — ou descarta o que houver.
+
+    Devolve ``True`` quando ficou algo para desfazer.
+    """
+    if not destrutiva:
+        descartar_retrocesso(sessao)
+        return False
+
+    sessao[CHAVE_RETROCESSO] = {
+        "estudo": estudo.pk,
+        "tipo": retrato["tipo"],
+        "descricao": descricao,
+        "quando": timezone.now().isoformat(),
+        "dados": retrato["dados"],
+    }
+    sessao.modified = True
+    return True
+
+
+def _retrocesso_guardado(sessao, estudo) -> dict | None:
+    """O retrato que está na sessão, se for deste estudo."""
+    guardado = sessao.get(CHAVE_RETROCESSO)
+    if not guardado or guardado.get("estudo") != estudo.pk:
+        return None
+    return guardado
+
+
+def retrocesso_disponivel(sessao, estudo) -> dict | None:
+    """O retrato que a tela pode oferecer para desfazer.
+
+    Guardado é uma coisa, oferecível é outra: um estudo liberado não aceita
+    alteração de dado bruto, então a faixa não aparece nem que haja retrato.
+    """
+    if estudo.situacao == estudo.LIBERADO:
+        return None
+    return _retrocesso_guardado(sessao, estudo)
+
+
+def retrocesso_no_quadro(sessao, estudos) -> dict | None:
+    """O retrato guardado, se o estudo dele estiver no quadro deste usuário.
+
+    Quem apagou sem querer costuma perceber depois de sair da tela de
+    lançamento, e o quadro é para onde se volta. Recebe a lista de estudos já
+    filtrada pelo laboratório de propósito: assim o desfazer não alcança um
+    estudo que o usuário não enxerga, mesmo que o retrato esteja na sessão.
+    """
+    guardado = sessao.get(CHAVE_RETROCESSO)
+    if not guardado:
+        return None
+
+    estudo = estudos.filter(pk=guardado.get("estudo")).first()
+    if estudo is None or estudo.situacao == estudo.LIBERADO:
+        return None
+    return dict(guardado, estudo_nome=estudo.identificacao)
+
+
+def desfazer_ultima_escrita(sessao, estudo, usuario) -> str:
+    """Devolve o lançamento ao estado do retrato guardado.
+
+    A desfeita é uma escrita como qualquer outra, e vai para a trilha com esse
+    nome. Um estudo que volta atrás sem deixar rastro é pior do que um estudo
+    que perdeu uma medição: some o dado e some a explicação de para onde foi.
+    """
+    if estudo.situacao == estudo.LIBERADO:
+        raise AcaoRecusada(
+            "Estudo liberado não aceita alteração de dado bruto. Cancele o estudo "
+            "e abra outro."
+        )
+    guardado = _retrocesso_guardado(sessao, estudo)
+    if guardado is None:
+        raise AcaoRecusada("Não há nada para desfazer neste estudo.")
+
+    dados = guardado["dados"]
+    tipo = guardado["tipo"]
+
+    with transaction.atomic():
+        if tipo == "replicas":
+            _restaurar_replicas(estudo, dados)
+        elif tipo == "amostras":
+            _restaurar_amostras(estudo, dados)
+        else:
+            _restaurar_qualitativas(estudo, dados)
+
+        RegistroAuditoria.objects.create(
+            laboratorio=estudo.laboratorio,
+            usuario=usuario if usuario.is_authenticated else None,
+            acao="desfez a última alteração de dado bruto",
+            objeto=estudo.identificacao,
+            detalhe={
+                "desfeito": guardado["descricao"],
+                "escrito_em": guardado["quando"],
+            },
+        )
+
+    del sessao[CHAVE_RETROCESSO]
+    sessao.modified = True
+    return guardado["descricao"]
+
+
+def _restaurar_replicas(estudo, dados) -> None:
+    from catalogo.models import Controle
+
+    from .models import NivelEstudo, Replica
+
+    # Os níveis podem ter sumido junto (remoção de coluna): recria os que
+    # faltam, preservando o número, e refaz o mapa de identificadores — a
+    # coluna volta com outro pk, e as réplicas do retrato precisam achar o novo.
+    existentes = {nivel.pk: nivel for nivel in estudo.niveis.all()}
+    mapa = {}
+    for retrato in dados["niveis"]:
+        nivel = existentes.get(retrato["pk"])
+        alvo = Decimal(retrato["media"]) if retrato["media"] is not None else None
+        if nivel is None:
+            # O material de controle pode ter sido apagado do catálogo depois
+            # que o nível saiu: sem ele não há o que recriar, e é melhor dizer
+            # isso do que restaurar meia grade.
+            controle = Controle.objects.filter(pk=retrato["controle"]).first()
+            if controle is None:
+                raise AcaoRecusada(
+                    "O material de controle deste nível foi removido do catálogo. "
+                    "Cadastre-o de novo e lance as réplicas."
+                )
+            nivel = NivelEstudo.objects.create(
+                estudo=estudo,
+                numero=retrato["numero"],
+                controle=controle,
+                media_interlaboratorial=alvo,
+                provedor_interlaboratorial=retrato["provedor"],
+            )
+        elif (
+            nivel.media_interlaboratorial != alvo
+            or nivel.provedor_interlaboratorial != retrato["provedor"]
+        ):
+            # O alvo do bias é digitado no cabeçalho da mesma grade e gravado na
+            # mesma requisição: se ele mudou, é parte do que se está desfazendo.
+            nivel.media_interlaboratorial = alvo
+            nivel.provedor_interlaboratorial = retrato["provedor"]
+            nivel.save(
+                update_fields=[
+                    "media_interlaboratorial",
+                    "provedor_interlaboratorial",
+                ]
+            )
+        mapa[retrato["pk"]] = nivel
+
+    estudo.niveis.exclude(pk__in=[nivel.pk for nivel in mapa.values()]).delete()
+    Replica.objects.filter(nivel__estudo=estudo).delete()
+    Replica.objects.bulk_create(
+        [
+            Replica(
+                nivel=mapa[retrato["nivel"]],
+                corrida=retrato["corrida"],
+                sequencia=retrato["sequencia"],
+                valor=Decimal(retrato["valor"]),
+                excluida=retrato["excluida"],
+                justificativa_exclusao=retrato["justificativa"],
+            )
+            for retrato in dados["replicas"]
+            if retrato["nivel"] in mapa
+        ]
+    )
+
+
+def _restaurar_amostras(estudo, dados) -> None:
+    from .models import AmostraComparacao
+
+    estudo.amostras_comparacao.all().delete()
+    AmostraComparacao.objects.bulk_create(
+        [
+            AmostraComparacao(
+                estudo=estudo,
+                identificacao=retrato["identificacao"],
+                valor_comparacao=Decimal(retrato["comparacao"]),
+                valor_teste=Decimal(retrato["teste"]),
+                excluida=retrato["excluida"],
+                justificativa_exclusao=retrato["justificativa"],
+            )
+            for retrato in dados["amostras"]
+        ]
+    )
+
+
+def _restaurar_qualitativas(estudo, dados) -> None:
+    from .models import AmostraQualitativa
+
+    estudo.amostras_qualitativas.all().delete()
+    AmostraQualitativa.objects.bulk_create(
+        [
+            AmostraQualitativa(
+                estudo=estudo,
+                identificacao=retrato["identificacao"],
+                resultado_referencia=retrato["referencia"],
+                resultado_teste=retrato["teste"],
+            )
+            for retrato in dados["amostras"]
+        ]
+    )
+
+
+def remover_nivel(estudo, usuario, nivel_id: str) -> dict:
     """Apaga uma coluna da grade e as réplicas que estavam nela.
 
-    Apagar medição é destrutivo e não se desfaz, então o registro do que sumiu
-    é o que resta: quantas réplicas foram junto, de qual lote, por quem. Um
-    nível que desaparece de um estudo sem deixar rastro é o mesmo problema da
-    réplica descartada que some do relatório.
+    Apagar medição é destrutivo. O retrocesso da sessão desfaz o clique
+    imediato, mas ele é um passo só e morre com a sessão; o que fica é o
+    registro do que sumiu: quantas réplicas foram junto, de qual lote, por
+    quem. Um nível que desaparece de um estudo sem deixar rastro é o mesmo
+    problema da réplica descartada que some do relatório.
 
     Não é o mesmo gesto que excluir uma réplica: aquela continua no banco, com
     justificativa, e aparece riscada no anexo. Esta some. É por isso que a tela
     esconde o botão atrás de uma abertura e diz o número antes de perguntar.
+
+    Devolve duas frases: o recado da tela e a que completa "a última gravação
+    ___" na faixa de desfazer.
     """
     if estudo.situacao == estudo.LIBERADO:
         raise AcaoRecusada(
@@ -1248,8 +1577,14 @@ def remover_nivel(estudo, usuario, nivel_id: str) -> str:
         )
 
     if replicas:
-        return f"{identificacao} removido, junto de {replicas} réplica(s)."
-    return f"{identificacao} removido."
+        return {
+            "recado": f"{identificacao} removido, junto de {replicas} réplica(s).",
+            "desfazer": f"removeu o nível {nivel.numero} e {replicas} réplica(s)",
+        }
+    return {
+        "recado": f"{identificacao} removido.",
+        "desfazer": f"removeu o nível {nivel.numero}",
+    }
 
 
 # --- Grade de lançamento de amostras pareadas -------------------------------
@@ -1402,6 +1737,7 @@ def salvar_grade_qualitativa(estudo, dados, total: int) -> dict:
         )
 
     gravadas = 0
+    sobrescritas = 0
     with transaction.atomic():
         for amostra in a_apagar:
             amostra.delete()
@@ -1433,8 +1769,14 @@ def salvar_grade_qualitativa(estudo, dados, total: int) -> dict:
                     ]
                 )
                 gravadas += 1
+                sobrescritas += 1
 
-    return {"gravadas": gravadas, "apagadas": len(a_apagar), "erros": erros}
+    return {
+        "gravadas": gravadas,
+        "apagadas": len(a_apagar),
+        "sobrescritas": sobrescritas,
+        "erros": erros,
+    }
 
 
 def montar_grade_amostras(estudo, linhas_pedidas: int = 0) -> dict:
@@ -1601,6 +1943,7 @@ def salvar_grade_amostras(estudo, dados, total: int) -> dict:
         )
 
     gravadas = 0
+    sobrescritas = 0
     with transaction.atomic():
         for amostra in a_apagar:
             amostra.delete()
@@ -1630,5 +1973,11 @@ def salvar_grade_amostras(estudo, dados, total: int) -> dict:
                     update_fields=["identificacao", "valor_comparacao", "valor_teste"]
                 )
                 gravadas += 1
+                sobrescritas += 1
 
-    return {"gravadas": gravadas, "apagadas": len(a_apagar), "erros": erros}
+    return {
+        "gravadas": gravadas,
+        "apagadas": len(a_apagar),
+        "sobrescritas": sobrescritas,
+        "erros": erros,
+    }

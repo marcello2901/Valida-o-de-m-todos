@@ -8,6 +8,7 @@ from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
 
 from catalogo.models import Controle
@@ -69,7 +70,15 @@ def quadro(request):
             }
         )
 
-    return render(request, "estudos/quadro.html", {"secao": "quadro", "colunas": colunas})
+    return render(
+        request,
+        "estudos/quadro.html",
+        {
+            "secao": "quadro",
+            "colunas": colunas,
+            "retrocesso": servicos.retrocesso_no_quadro(request.session, estudos),
+        },
+    )
 
 
 def _estudo_do_usuario(request, estudo_id: int) -> Estudo:
@@ -188,6 +197,62 @@ def liberar(request, estudo_id: int):
 
 
 @login_required
+@require_POST
+def desfazer(request, estudo_id: int):
+    """Devolve o estudo ao estado anterior à última gravação destrutiva.
+
+    É POST porque escreve. Um desfazer em link seria disparado por qualquer
+    coisa que buscasse a página — pré-carregamento do navegador, robô de
+    indexação — e apagaria lançamento sem ninguém clicar em nada.
+    """
+    estudo = _estudo_do_usuario(request, estudo_id)
+
+    try:
+        descricao = servicos.desfazer_ultima_escrita(
+            request.session, estudo, request.user
+        )
+    except servicos.AcaoRecusada as recusa:
+        messages.error(request, str(recusa))
+    else:
+        messages.success(
+            request,
+            f"Desfeito: {descricao}. O estudo voltou ao estado anterior, e a "
+            "desfeita está na trilha de auditoria.",
+        )
+
+    # Volta para a tela de onde veio, se for uma tela deste programa. Aceitar
+    # qualquer endereço aqui seria um redirecionamento aberto — o clássico
+    # "clique neste link do sistema e caia num site parecido".
+    destino = request.POST.get("voltar") or ""
+    if destino and url_has_allowed_host_and_scheme(
+        destino, allowed_hosts={request.get_host()}, require_https=request.is_secure()
+    ):
+        return redirect(destino)
+    return redirect("resultado_estudo", estudo_id=estudo.pk)
+
+
+def _descrever_escrita(resumo, alvos_trocados: int, nome: str) -> str:
+    """Frase curta do que a gravação destruiu, para o aviso de desfazer.
+
+    Completa "a última gravação ___", e só o que sumiu entra nela. Quem lê o
+    aviso quer saber o que perdeu, não quantas linhas novas escreveu — essas
+    estão na tela, e ninguém desfaz o que acabou de digitar de propósito.
+    """
+    partes = []
+    if resumo.get("apagadas"):
+        partes.append(f"apagou {resumo['apagadas']} {nome}(s)")
+    if resumo.get("sobrescritas"):
+        partes.append(f"trocou o valor de {resumo['sobrescritas']} {nome}(s)")
+    if alvos_trocados:
+        partes.append(
+            f"trocou a média interlaboratorial de {alvos_trocados} nível(is)"
+        )
+    if not partes:
+        return "mudou o lançamento"
+    return " e ".join(partes)
+
+
+@login_required
 def relatorio(request, estudo_id: int):
     """Relatório de validação, formatado para papel.
 
@@ -250,25 +315,53 @@ def replicas(request, estudo_id: int):
             if erro:
                 messages.error(request, erro)
             else:
+                # Acrescentar não destrói nada, mas invalida o retrato guardado:
+                # desfazer para um estado anterior à coluna nova a apagaria.
+                servicos.descartar_retrocesso(request.session)
                 messages.success(request, "Nível acrescentado à grade.")
         elif request.POST.get("remover_nivel"):
+            # O retrato sai antes da escrita: é o estado para onde o desfazer
+            # devolve o estudo, e depois da gravação já não existe.
+            #
             # O identificador vem no próprio botão: o navegador envia só o
             # botão clicado, então não é preciso JavaScript para saber qual
             # coluna remover.
+            retrato = servicos.tirar_retrato(estudo, "replicas")
             try:
-                recado = servicos.remover_nivel(
+                removido = servicos.remover_nivel(
                     estudo, request.user, request.POST["remover_nivel"]
                 )
             except servicos.AcaoRecusada as recusa:
                 messages.error(request, str(recusa))
             else:
-                messages.success(request, f"{recado} A remoção está na trilha de auditoria.")
+                servicos.guardar_retrocesso(
+                    request.session,
+                    estudo,
+                    retrato,
+                    removido["desfazer"],
+                    destrutiva=True,
+                )
+                messages.success(
+                    request,
+                    f"{removido['recado']} A remoção está na trilha de auditoria, "
+                    "e dá para desfazer aqui mesmo.",
+                )
         else:
-            _salvar_medias_alvo(request, estudo)
+            retrato = servicos.tirar_retrato(estudo, "replicas")
+            alvos_trocados = _salvar_medias_alvo(request, estudo)
             resumo = servicos.salvar_grade(estudo, request.POST)
             if resumo["erros"]:
                 _relatar_pendencias(request, resumo, "réplica")
             else:
+                servicos.guardar_retrocesso(
+                    request.session,
+                    estudo,
+                    retrato,
+                    _descrever_escrita(resumo, alvos_trocados, "réplica"),
+                    destrutiva=bool(
+                        resumo["apagadas"] or resumo["sobrescritas"] or alvos_trocados
+                    ),
+                )
                 messages.success(
                     request,
                     f"{resumo['gravadas']} réplica(s) gravada(s)"
@@ -285,6 +378,7 @@ def replicas(request, estudo_id: int):
         {
             "secao": "quadro",
             "estudo": estudo,
+            "retrocesso": servicos.retrocesso_disponivel(request.session, estudo),
             "colunas": servicos.montar_grade(estudo),
             "andamento": estudo.progresso(),
             "controles_disponiveis": _controles_livres(estudo),
@@ -312,10 +406,18 @@ def amostras(request, estudo_id: int):
             destino = f"{reverse('amostras_estudo', args=[estudo.pk])}?linhas={total + servicos.PASSO_DE_LINHAS}"
             return redirect(destino)
 
+        retrato = servicos.tirar_retrato(estudo, "amostras")
         resumo = servicos.salvar_grade_amostras(estudo, request.POST, total)
         if resumo["erros"]:
             _relatar_pendencias(request, resumo, "amostra")
         else:
+            servicos.guardar_retrocesso(
+                request.session,
+                estudo,
+                retrato,
+                _descrever_escrita(resumo, 0, "amostra"),
+                destrutiva=bool(resumo["apagadas"] or resumo["sobrescritas"]),
+            )
             messages.success(
                 request,
                 f"{resumo['gravadas']} amostra(s) gravada(s)"
@@ -331,6 +433,7 @@ def amostras(request, estudo_id: int):
         {
             "secao": "quadro",
             "estudo": estudo,
+            "retrocesso": servicos.retrocesso_disponivel(request.session, estudo),
             "grade": grade,
             "andamento": estudo.progresso(),
             "passo": servicos.PASSO_DE_LINHAS,
@@ -365,10 +468,18 @@ def qualitativas(request, estudo_id: int):
             destino = f"{reverse('qualitativas_estudo', args=[estudo.pk])}?linhas={total + servicos.PASSO_DE_LINHAS}"
             return redirect(destino)
 
+        retrato = servicos.tirar_retrato(estudo, "qualitativas")
         resumo = servicos.salvar_grade_qualitativa(estudo, request.POST, total)
         if resumo["erros"]:
             _relatar_pendencias(request, resumo, "amostra")
         else:
+            servicos.guardar_retrocesso(
+                request.session,
+                estudo,
+                retrato,
+                _descrever_escrita(resumo, 0, "amostra"),
+                destrutiva=bool(resumo["apagadas"] or resumo["sobrescritas"]),
+            )
             messages.success(
                 request,
                 f"{resumo['gravadas']} amostra(s) gravada(s)"
@@ -384,6 +495,7 @@ def qualitativas(request, estudo_id: int):
         {
             "secao": "quadro",
             "estudo": estudo,
+            "retrocesso": servicos.retrocesso_disponivel(request.session, estudo),
             "grade": grade,
             "andamento": estudo.progresso(),
             "passo": servicos.PASSO_DE_LINHAS,
@@ -485,13 +597,17 @@ def _inteiro(bruto, padrao: int) -> int:
     return max(0, min(valor, 500))
 
 
-def _salvar_medias_alvo(request, estudo):
+def _salvar_medias_alvo(request, estudo) -> int:
     """Grava a média interlaboratorial digitada no cabeçalho de cada coluna.
 
     Fica junto das réplicas de propósito: é o alvo do bias daquele nível, e
     obrigar o usuário a procurá-lo noutra tela é o tipo de ida e volta que faz a
     exatidão simplesmente não ser preenchida.
+
+    Devolve quantos alvos que já estavam preenchidos foram trocados — é o que
+    diz se esta gravação destruiu alguma coisa e merece um desfazer.
     """
+    sobrescritas = 0
     for nivel in estudo.niveis.all():
         bruto = (request.POST.get(f"alvo_{nivel.pk}") or "").strip()
         # Texto livre, então o tamanho do campo é o teto — o navegador respeita
@@ -507,9 +623,13 @@ def _salvar_medias_alvo(request, estudo):
             )
             continue
         if nivel.media_interlaboratorial != alvo or nivel.provedor_interlaboratorial != provedor:
+            if nivel.media_interlaboratorial is not None or nivel.provedor_interlaboratorial:
+                sobrescritas += 1
             nivel.media_interlaboratorial = alvo
             nivel.provedor_interlaboratorial = provedor
             nivel.save(update_fields=["media_interlaboratorial", "provedor_interlaboratorial"])
+
+    return sobrescritas
 
 
 def _controles_livres(estudo):
@@ -537,6 +657,7 @@ def resultado(request, estudo_id: int):
     contexto = servicos.calcular(estudo)
     contexto["secao"] = "quadro"
     contexto["andamento"] = estudo.progresso()
+    contexto["retrocesso"] = servicos.retrocesso_disponivel(request.session, estudo)
     contexto["proxima_acao"] = estudo.proxima_acao()
     contexto["pode_assinar"] = getattr(request.user, "pode_assinar_relatorio", lambda: False)()
 

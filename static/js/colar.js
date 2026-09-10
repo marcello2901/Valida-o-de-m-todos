@@ -88,6 +88,7 @@
     var colunaInicial = parseInt(destino.dataset.coluna, 10);
     var preenchidos = 0;
     var sobraram = 0;
+    var atingidos = [];
 
     bloco.forEach(function (celulas, deslocamentoLinha) {
       celulas.forEach(function (valor, deslocamentoColuna) {
@@ -100,9 +101,27 @@
           if (valor !== "") sobraram += 1;
           return;
         }
-        alvo.value = valor;
+        atingidos.push({ campo: alvo, valor: valor });
         preenchidos += 1;
       });
+    });
+
+    // Colar por cima de dado digitado é o outro jeito de perder lançamento.
+    // Fotografa antes de escrever — o desfazer do navegador não vê o que o
+    // programa escreve, e sai de cena assim que isto acontece.
+    if (window.Desfazer) {
+      window.Desfazer.registrar(
+        "colagem de " + preenchidos + " valor(es)",
+        window.Desfazer.retrato(
+          atingidos.map(function (item) {
+            return item.campo;
+          })
+        )
+      );
+    }
+
+    atingidos.forEach(function (item) {
+      item.campo.value = item.valor;
     });
 
     var recado = preenchidos + " valor(es) colado(s) a partir da linha " + linhaInicial + ".";
@@ -110,7 +129,7 @@
       recado +=
         " " + sobraram + " não couberam na grade — acrescente linhas e cole o resto.";
     }
-    recado += " Confira antes de salvar.";
+    recado += " Confira antes de salvar — Ctrl+Z desfaz a colagem.";
     avisar(grade, recado);
   }
 

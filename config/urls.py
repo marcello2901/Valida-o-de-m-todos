@@ -40,5 +40,6 @@ urlpatterns = [
     path("estudos/<int:estudo_id>/analise/", estudos_views.analise_critica, name="analise_estudo"),
     path("estudos/<int:estudo_id>/recorte/", estudos_views.recorte, name="recorte_estudo"),
     path("estudos/<int:estudo_id>/liberar/", estudos_views.liberar, name="liberar_estudo"),
+    path("estudos/<int:estudo_id>/desfazer/", estudos_views.desfazer, name="desfazer_estudo"),
     path("admin/", admin.site.urls),
 ]
