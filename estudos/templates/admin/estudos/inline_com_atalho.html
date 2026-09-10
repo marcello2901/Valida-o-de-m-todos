@@ -1,0 +1,31 @@
+{% comment %}
+  Um inline do painel, seguido do painel de atalho para a tela de lançamento.
+
+  Existe porque o caminho até as grades passava obrigatoriamente pela tela de
+  resultado: quem já tem a planilha pronta e só quer colar precisava criar o
+  estudo, sair do cadastro, abrir o resultado e voltar. O atalho fica colado à
+  seção a que pertence — Réplicas logo abaixo de Níveis do estudo — e some no
+  formulário de criação, onde o estudo ainda não tem endereço para onde ir.
+
+  A configuração vem do próprio inline (``inline_admin_formset.opts``), então
+  um mesmo template serve às três grades.
+{% endcomment %}
+{% include "admin/edit_inline/tabular.html" %}
+
+{% with opcoes=inline_admin_formset.opts %}
+{% if opcoes.atalho_titulo %}
+<div class="module atalho-lancamento">
+  <h2>{{ opcoes.atalho_titulo }}</h2>
+  <div class="atalho-corpo">
+    <p class="atalho-explica">{{ opcoes.atalho_explicacao }}</p>
+    {% if original.pk %}
+      <a class="atalho-botao" href="{% url opcoes.atalho_rota original.pk %}">
+        {{ opcoes.atalho_botao }}
+      </a>
+    {% else %}
+      <p class="atalho-explica"><em>Salve o estudo primeiro — a grade precisa de um estudo para gravar.</em></p>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+{% endwith %}

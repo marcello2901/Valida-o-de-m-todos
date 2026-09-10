@@ -125,17 +125,32 @@ def calcular_precisao(estudo) -> list[dict]:
             agrupadas, estudo.desenho_precisao, nivel.alvo_do_bias()
         )
 
-        # Concentração usada para resolver limite percentual contra absoluto.
-        # É a média medida: era o que o programa já usava quase sempre, porque a
-        # concentração declarada quase nunca era preenchida — e quando era, punha
-        # o número da bula a decidir um limite sobre medições que são outras.
-        concentracao = estatistica["media"]
+        # Concentração que decide entre o limite percentual e o absoluto.
+        #
+        # É a média do grupo de pares quando informada, e não a média medida
+        # aqui. A regra do limite absoluto existe porque a concentração do
+        # material é baixa — e "baixa" tem de ser uma propriedade do material,
+        # não da leitura que está sendo julgada. Com a média medida no lugar, o
+        # critério de aceitação se mexe conforme o resultado: um controle de
+        # alvo 0,50 medido a 0,48 cai na regra absoluta e ganha 12,5% de folga;
+        # medido a 0,51 cai na percentual e passa a valer 6%. Um limite que
+        # depende do que se mediu não é critério de aceitação.
+        #
+        # Sem média interlaboratorial não há alternativa melhor à mão, e aí a
+        # média medida volta a valer — dito na tela, para ninguém supor outra
+        # coisa.
+        alvo = nivel.alvo_do_bias()
+        concentracao = alvo if alvo is not None else estatistica["media"]
+        origem_da_concentracao = (
+            "média interlaboratorial" if alvo is not None else "média das réplicas"
+        )
 
         resultados.append(
             {
                 "nivel": nivel,
                 "numero": nivel.numero,
                 "concentracao": concentracao,
+                "origem_da_concentracao": origem_da_concentracao,
                 "estatistica": estatistica,
                 "origem_do_alvo": nivel.origem_do_alvo(),
                 "valores_em_ordem": [valor for corrida in agrupadas for valor in corrida],
@@ -176,13 +191,19 @@ def calcular(estudo) -> dict:
     modulo = _modulo_efetivo(estudo)
 
     if estudo.tipo == estudo.QUALITATIVO:
+        qualitativo = calcular_qualitativo(estudo)
         return {
             "estudo": estudo,
             "tipo": estudo.QUALITATIVO,
             "modulo_efetivo": modulo,
-            "qualitativo": calcular_qualitativo(estudo),
+            "qualitativo": qualitativo,
             "especificacao": especificacao,
             "pendencias_especificacao": especificacao.pendencias(),
+            # O relatório qualitativo saía sem nenhuma ressalva, sempre — a
+            # chave nem existia. Um estudo com quatro positivos imprimia uma
+            # sensibilidade com cara de número firme e nada dizia que ela
+            # oscila 25 pontos com um resultado a mais.
+            "avisos": _avisos_qualitativos(estudo, qualitativo),
         }
 
     precisao_por_nivel = calcular_precisao(estudo)
@@ -202,6 +223,10 @@ def calcular(estudo) -> dict:
                 "concentracao": item["concentracao"],
                 "cv_pct": item["estatistica"]["cv_aplicavel"],
                 "bias_pct": bias["relativo_pct"] if bias["avaliavel"] else None,
+                # Qual estudo produziu este bias. É o que decide se o módulo
+                # contratado pode avaliá-lo: o bias contra o grupo de pares sai
+                # da precisão, o bias da reta sai da comparabilidade.
+                "origem_do_bias": origem,
             }
         )
 
@@ -463,6 +488,45 @@ def _graficos(estudo, precisao_por_nivel, comparabilidade) -> dict:
         )
 
     return saida
+
+
+def _avisos_qualitativos(estudo, qualitativo) -> list[str]:
+    """Ressalvas de um estudo qualitativo.
+
+    Sensibilidade e especificidade são duas proporções estimadas em separado, e
+    cada uma só usa metade da amostra: a sensibilidade vem dos positivos de
+    referência, a especificidade dos negativos. Por isso o que importa não é o
+    total de amostras, e sim quantas há em cada categoria — trinta amostras
+    todas negativas não estimam sensibilidade nenhuma.
+    """
+    avisos: list[str] = []
+
+    if not qualitativo.get("tem_dados"):
+        return avisos
+
+    total = estudo.amostras_qualitativas_lancadas()
+    if total < qual.MINIMO_AMOSTRAS_EP12:
+        avisos.append(
+            f"Estudo com {total} amostra(s) qualitativa(s); a grade abre com "
+            f"{qual.MINIMO_AMOSTRAS_EP12}, que é o tamanho usual de uma verificação "
+            "pelo usuário."
+        )
+
+    tabela = qualitativo.get("tabela") or {}
+    positivos = (tabela.get("verdadeiros_positivos") or 0) + (tabela.get("falsos_negativos") or 0)
+    negativos = (tabela.get("verdadeiros_negativos") or 0) + (tabela.get("falsos_positivos") or 0)
+
+    for rotulo, quantidade, medida in (
+        ("positivas na referência", positivos, "sensibilidade"),
+        ("negativas na referência", negativos, "especificidade"),
+    ):
+        if quantidade < qual.MINIMO_POR_CATEGORIA:
+            avisos.append(
+                f"Apenas {quantidade} amostra(s) {rotulo}: a {medida} estimada tem "
+                "intervalo de confiança largo e não sustenta conclusão sozinha."
+            )
+
+    return avisos
 
 
 def _avisos(estudo, precisao_por_nivel, comparabilidade) -> list[str]:
@@ -923,10 +987,180 @@ def acrescentar_nivel(estudo, controle_id: str, media_alvo: str = "") -> str:
 AMOSTRAS_POR_PISTA = 20
 PASSO_DE_LINHAS = 10
 MINIMO_AMOSTRAS_GRADE = comp.MINIMO_AMOSTRAS_EP09
+MINIMO_AMOSTRAS_QUALITATIVAS = qual.MINIMO_AMOSTRAS_EP12
 
 
 def _identificacao_sugerida(posicao: int) -> str:
     return f"AM-{posicao:03d}"
+
+
+# --- Grade de lançamento qualitativo ----------------------------------------
+#
+# O resultado é categórico, então o campo é de texto e não de número — e o
+# laboratório escreve isso de todo jeito. A planilha que sai do equipamento traz
+# "REAGENTE", a digitada à mão traz "P", a exportada de um LIS traz "1", e a de
+# quem trabalha com sorologia traz "Positivo". Recusar tudo menos uma grafia
+# obrigaria a reescrever a coluna inteira antes de colar, que é exatamente o
+# trabalho que a colagem existe para evitar.
+#
+# O que NÃO entra nesta lista, de propósito: "indeterminado", "inconclusivo",
+# "zona cinzenta". Um resultado indeterminado não é reagente nem não reagente, e
+# empurrá-lo para um dos dois lados falsifica a tabela 2×2. A linha fica em
+# branco e o relatório conta uma amostra a menos, que é a verdade.
+_REAGENTE = {
+    "reagente", "r", "positivo", "pos", "p", "+", "1",
+    "detectavel", "detectável", "sim", "s", "true", "verdadeiro",
+}
+_NAO_REAGENTE = {
+    "nao reagente", "não reagente", "naoreagente", "nr", "negativo", "neg", "n", "-", "0",
+    "nao detectavel", "não detectável", "naodetectavel", "indetectavel", "indetectável",
+    "nao", "não", "false", "falso",
+}
+
+
+def converter_reagente(bruto: str) -> bool:
+    """Lê um resultado qualitativo escrito do jeito que o laboratório escreve.
+
+    Devolve ``True`` para reagente e ``False`` para não reagente. Levanta
+    ``ValueError`` para qualquer outra coisa — inclusive "indeterminado", que é
+    um resultado legítimo e simplesmente não cabe numa tabela 2×2.
+    """
+    texto = " ".join((bruto or "").strip().lower().split())
+    if texto in _REAGENTE:
+        return True
+    if texto in _NAO_REAGENTE:
+        return False
+    raise ValueError(
+        f"“{bruto.strip()}” não é reagente nem não reagente. Use "
+        "“reagente”/“não reagente”, “positivo”/“negativo”, “P”/“N” ou 1/0."
+    )
+
+
+def montar_grade_qualitativa(estudo, linhas_pedidas: int = 0) -> dict:
+    """Linhas de amostra qualitativa, repartidas em pistas.
+
+    Mesma metáfora das outras duas grades. O número de linhas nunca encolhe
+    abaixo do que já foi digitado.
+    """
+    existentes = list(estudo.amostras_qualitativas.order_by("pk"))
+    total = max(qual.MINIMO_AMOSTRAS_EP12, len(existentes), linhas_pedidas)
+
+    linhas = []
+    for posicao in range(1, total + 1):
+        amostra = existentes[posicao - 1] if posicao <= len(existentes) else None
+        linhas.append(
+            {
+                "posicao": posicao,
+                "identificacao": amostra.identificacao if amostra else "",
+                "sugestao": _identificacao_sugerida(posicao),
+                "referencia": _texto_reagente(amostra.resultado_referencia) if amostra else "",
+                "teste": _texto_reagente(amostra.resultado_teste) if amostra else "",
+            }
+        )
+
+    pistas = [
+        linhas[inicio : inicio + AMOSTRAS_POR_PISTA]
+        for inicio in range(0, len(linhas), AMOSTRAS_POR_PISTA)
+    ]
+    return {"total": total, "pistas": pistas, "minimo": qual.MINIMO_AMOSTRAS_EP12}
+
+
+def _texto_reagente(valor: bool) -> str:
+    """Como o valor gravado volta para a grade — na grafia que o campo aceita."""
+    return "Reagente" if valor else "Não reagente"
+
+
+def salvar_grade_qualitativa(estudo, dados, total: int) -> dict:
+    """Grava a grade qualitativa de uma vez, com as mesmas regras das outras.
+
+    - Linha com os dois resultados em branco apaga a amostra daquela posição.
+    - Linha com **um** resultado só é erro: sem o par não há concordância a
+      medir, e gravar meia amostra deixaria o estudo com uma linha que não conta
+      e ninguém sabe por quê.
+    - Identificação em branco recebe a sugerida.
+    - Linha com problema não derruba as outras.
+    """
+    from .models import AmostraQualitativa
+
+    erros: list[str] = []
+    a_gravar: list[dict] = []
+    a_apagar: list = []
+
+    existentes = list(estudo.amostras_qualitativas.order_by("pk"))
+
+    for posicao in range(1, total + 1):
+        amostra = existentes[posicao - 1] if posicao <= len(existentes) else None
+
+        campo_ref = f"amostra_{posicao}_referencia"
+        campo_teste = f"amostra_{posicao}_teste"
+        if campo_ref not in dados and campo_teste not in dados:
+            continue  # Envio parcial: o que não veio não é "apague".
+
+        bruto_ref = (dados.get(campo_ref) or "").strip()
+        bruto_teste = (dados.get(campo_teste) or "").strip()
+        identificacao = (dados.get(f"amostra_{posicao}_id") or "").strip()
+
+        if not bruto_ref and not bruto_teste:
+            if amostra:
+                a_apagar.append(amostra)
+            continue
+
+        if not bruto_ref or not bruto_teste:
+            erros.append(
+                f"Linha {posicao}: a amostra precisa do resultado nos dois métodos."
+            )
+            continue
+
+        try:
+            referencia = converter_reagente(bruto_ref)
+            teste = converter_reagente(bruto_teste)
+        except ValueError as invalido:
+            erros.append(f"Linha {posicao}: {invalido}")
+            continue
+
+        a_gravar.append(
+            {
+                "amostra": amostra,
+                "identificacao": identificacao or _identificacao_sugerida(posicao),
+                "referencia": referencia,
+                "teste": teste,
+            }
+        )
+
+    gravadas = 0
+    with transaction.atomic():
+        for amostra in a_apagar:
+            amostra.delete()
+
+        for item in a_gravar:
+            amostra = item["amostra"]
+            if amostra is None:
+                AmostraQualitativa.objects.create(
+                    estudo=estudo,
+                    identificacao=item["identificacao"],
+                    resultado_referencia=item["referencia"],
+                    resultado_teste=item["teste"],
+                )
+                gravadas += 1
+                continue
+
+            mudou = (
+                amostra.identificacao != item["identificacao"]
+                or amostra.resultado_referencia != item["referencia"]
+                or amostra.resultado_teste != item["teste"]
+            )
+            if mudou:
+                amostra.identificacao = item["identificacao"]
+                amostra.resultado_referencia = item["referencia"]
+                amostra.resultado_teste = item["teste"]
+                amostra.save(
+                    update_fields=[
+                        "identificacao", "resultado_referencia", "resultado_teste"
+                    ]
+                )
+                gravadas += 1
+
+    return {"gravadas": gravadas, "apagadas": len(a_apagar), "erros": erros}
 
 
 def montar_grade_amostras(estudo, linhas_pedidas: int = 0) -> dict:

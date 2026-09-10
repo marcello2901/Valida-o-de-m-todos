@@ -24,6 +24,7 @@ from estudos import servicos
 from estudos.models import (
     VERSAO_MOTOR,
     AmostraComparacao,
+    AmostraQualitativa,
     Estudo,
     NivelEstudo,
     Replica,
@@ -44,8 +45,6 @@ def montar_estudo(laboratorio: Laboratorio, usuario: Usuario) -> Estudo:
         nome="FT4",
         unidade_medida="ng/dL",
         material_biologico="soro",
-        referencia_inferior=Decimal("0.8"),
-        referencia_superior=Decimal("1.8"),
     )
     teste = SistemaAnalitico.objects.create(
         laboratorio=laboratorio, papel=SistemaAnalitico.TESTE,
@@ -622,13 +621,15 @@ class TestIntervalosDeReferenciaPorMetodo(TestCase):
         )
         self.estudo = montar_estudo(self.laboratorio, self.usuario)
 
-    def test_sem_intervalo_proprio_o_estudo_herda_o_do_mensurando(self):
-        self.assertEqual(
-            self.estudo.intervalo_de_comparacao(), (Decimal("0.8"), Decimal("1.8"))
-        )
+    def test_o_estudo_comeca_sem_intervalo_nenhum(self):
+        # Não há mais reserva no analito: o intervalo é da metodologia, e quem o
+        # declara é a validação. Em branco, a concordância clínica não é
+        # avaliada — e o relatório diz isso, em vez de classificar os dois
+        # métodos por uma faixa que não é de nenhum dos dois.
+        self.assertEqual(self.estudo.intervalo_de_comparacao(), (None, None))
         self.assertEqual(self.estudo.intervalo_de_teste(), (None, None))
 
-    def test_o_intervalo_do_estudo_prevalece_sobre_o_do_mensurando(self):
+    def test_o_intervalo_declarado_no_estudo_e_o_que_vale(self):
         self.estudo.referencia_comparacao_inferior = Decimal("0.9")
         self.estudo.referencia_comparacao_superior = Decimal("1.7")
         self.estudo.save()
@@ -638,6 +639,8 @@ class TestIntervalosDeReferenciaPorMetodo(TestCase):
         )
 
     def test_intervalos_diferentes_chegam_ao_calculo(self):
+        self.estudo.referencia_comparacao_inferior = Decimal("0.8")
+        self.estudo.referencia_comparacao_superior = Decimal("1.8")
         self.estudo.referencia_teste_inferior = Decimal("0.85")
         self.estudo.referencia_teste_superior = Decimal("1.86")
         self.estudo.save()
@@ -648,6 +651,8 @@ class TestIntervalosDeReferenciaPorMetodo(TestCase):
         self.assertEqual(clinica["intervalo_teste"], (0.85, 1.86))
 
     def test_a_tela_mostra_os_dois_intervalos_usados(self):
+        self.estudo.referencia_comparacao_inferior = Decimal("0.8")
+        self.estudo.referencia_comparacao_superior = Decimal("1.8")
         self.estudo.referencia_teste_inferior = Decimal("0.85")
         self.estudo.referencia_teste_superior = Decimal("1.86")
         self.estudo.save()
@@ -1273,12 +1278,20 @@ class TestRelatorio(TestCase):
         json.dumps(self.estudo.veredito.detalhamento)  # não pode levantar
 
     def test_o_relatorio_cita_o_intervalo_analitico_do_kit(self):
+        # O rótulo perdeu o "(teste)": o intervalo mora dentro do cartão do
+        # sistema a que pertence, e o cartão já diz qual é.
         self.calcular()
 
         resposta = self.client.get(self.url)
 
-        self.assertContains(resposta, "Intervalo analítico (teste)")
+        self.assertContains(resposta, "Intervalo analítico")
         self.assertContains(resposta, "lote R1")
+        corpo = resposta.content.decode()
+        cartao_teste = corpo.index("Sistema em teste")
+        cartao_comparacao = corpo.index("Sistema de comparação")
+        intervalo = corpo.index("Intervalo analítico")
+        self.assertLess(cartao_teste, intervalo)
+        self.assertLess(intervalo, cartao_comparacao)
 
 
 def pytest_aprox(valor, casas=6):
@@ -1630,6 +1643,25 @@ class TestLinhaDaExatidao(TestCase):
         self.assertContains(resposta, "bias máximo")
         self.assertContains(resposta, "estado--REPROVADO")
 
+    def test_o_relatorio_impresso_diz_o_mesmo_que_a_tela(self):
+        # A tela e o relatório são o mesmo dado lido por gente diferente. Foi
+        # exatamente aqui que a mudança anterior escapou: a linha entrou na tela
+        # e o documento impresso — o que sai do laboratório — ficou para trás.
+        self.nivel.media_interlaboratorial = Decimal("1.2000")
+        self.nivel.provedor_interlaboratorial = "Controllab EQ"
+        self.nivel.save()
+        self.client.post(reverse("concluir_estudo", args=[self.estudo.pk]))
+
+        relatorio = self.client.get(reverse("relatorio_estudo", args=[self.estudo.pk]))
+
+        corpo = relatorio.content.decode()
+        self.assertNotIn("Comparado com", corpo)
+        self.assertIn("Comparação", corpo)
+        self.assertIn("+9,58%", corpo)
+        self.assertIn("bias positivo", corpo)
+        self.assertIn("média das réplicas vs.", corpo)
+        self.assertIn("bias máximo", corpo)
+
     def test_sem_limite_de_bias_a_celula_diz_que_falta_e_nao_some(self):
         # Antes, quando o indicador não existia, a linha perdia duas colunas e
         # a tabela saía torta — o limite simplesmente sumia da tela.
@@ -1647,3 +1679,659 @@ class TestLinhaDaExatidao(TestCase):
 
         self.assertContains(resposta, "sem limite")
         self.assertContains(resposta, "estado--INDETERMINADO")
+
+
+class TestOrientacaoParaSalvarEmPDF(TestCase):
+    """A tela do relatório precisa dizer como o arquivo sai.
+
+    O programa não gera PDF no servidor: o botão abre a caixa de impressão do
+    navegador. Quem aceita o destino que já estava selecionado no Windows pode
+    sair com um .xps, que o sistema não abre mais — e conclui que o relatório
+    está quebrado. A instrução nomeia o destino certo em vez de só pedir para
+    escolher um, e some na impressão, onde seria ruído dentro do documento.
+    """
+
+    def setUp(self):
+        self.laboratorio = montar_laboratorio("Lab A", "11.111.111/0001-11")
+        self.responsavel = Usuario.objects.create_user(
+            username="rt", password="senha-longa-de-teste",
+            laboratorio=self.laboratorio, funcao=Usuario.RESPONSAVEL,
+        )
+        self.estudo = montar_estudo(self.laboratorio, self.responsavel)
+        self.client.force_login(self.responsavel)
+        self.client.post(reverse("concluir_estudo", args=[self.estudo.pk]))
+        self.url = reverse("relatorio_estudo", args=[self.estudo.pk])
+
+    def test_nomeia_o_destino_a_escolher(self):
+        resposta = self.client.get(self.url)
+
+        self.assertContains(resposta, "Salvar como PDF")
+        self.assertContains(resposta, "Microsoft Print to PDF")
+
+    def test_avisa_sobre_o_destino_que_gera_arquivo_que_nao_abre(self):
+        resposta = self.client.get(self.url)
+
+        self.assertContains(resposta, "XPS")
+
+    def test_o_botao_nao_promete_um_download(self):
+        # "Gerar PDF" prometia arquivo e entregava um diálogo.
+        resposta = self.client.get(self.url)
+
+        self.assertContains(resposta, "Salvar em PDF")
+        self.assertNotContains(resposta, "Gerar PDF")
+
+    def test_a_orientacao_nao_entra_no_papel(self):
+        resposta = self.client.get(self.url)
+
+        self.assertContains(resposta, ".comandos, .recados, .como-salvar { display: none !important; }")
+
+
+class TestExatidaoNoModuloDePrecisao(TestCase):
+    """A exatidão contra o grupo de pares pertence ao estudo de precisão.
+
+    O laboratório lança as réplicas, digita a média do mesmo lote no boletim do
+    programa interlaboratorial e o bias sai daí — sem amostra pareada nenhuma.
+    O motor exigia o módulo de comparabilidade para avaliá-lo, então quem
+    contratou só precisão via o percentual calculado na tela e, na coluna do
+    limite, "sem limite definido": o número aparecia sem veredito, que é a pior
+    forma de mostrá-lo num relatório de validação.
+    """
+
+    def setUp(self):
+        self.laboratorio = montar_laboratorio("Lab P", "22.222.222/0001-22")
+        self.laboratorio.assinaturas.all().delete()
+        Assinatura.objects.create(
+            laboratorio=self.laboratorio, modulo=Assinatura.PRECISAO
+        )
+        self.usuario = Usuario.objects.create_user(
+            username="analista", password="senha-longa-de-teste",
+            laboratorio=self.laboratorio, funcao=Usuario.RESPONSAVEL,
+        )
+        self.estudo = montar_estudo(self.laboratorio, self.usuario)
+        self.estudo.modulo = Assinatura.PRECISAO
+        self.estudo.save()
+
+        self.nivel = self.estudo.niveis.get(numero=1)
+        self.nivel.media_interlaboratorial = Decimal("1.2000")
+        self.nivel.provedor_interlaboratorial = "Controllab EQ"
+        self.nivel.save()
+
+        self.client.force_login(self.usuario)
+
+    def test_o_bias_maximo_da_ficha_e_o_limite_da_exatidao(self):
+        contexto = servicos.calcular(self.estudo)
+        item = contexto["precisao"][0]
+
+        self.assertEqual(item["origem_do_bias"], servicos.BIAS_INTERLABORATORIAL)
+        self.assertIsNotNone(item["indicador_bias"])
+        self.assertEqual(
+            Decimal(str(item["indicador_bias"]["limite_pct"])),
+            self.estudo.especificacao.bias_maximo_pct,
+        )
+
+    def test_a_tela_mostra_o_limite_e_a_situacao(self):
+        resposta = self.client.get(
+            reverse("resultado_estudo", args=[self.estudo.pk])
+        )
+
+        corpo = resposta.content.decode()
+        self.assertNotIn("sem limite", corpo)
+        self.assertIn("bias máximo", corpo)
+        # Réplicas em torno de 1,315 contra pares em 1,200: passa dos 6%.
+        self.assertIn("estado--REPROVADO", corpo)
+
+    def test_o_relatorio_mostra_o_limite_e_a_situacao(self):
+        self.client.post(reverse("concluir_estudo", args=[self.estudo.pk]))
+
+        resposta = self.client.get(
+            reverse("relatorio_estudo", args=[self.estudo.pk])
+        )
+
+        corpo = resposta.content.decode()
+        self.assertNotIn("sem limite definido", corpo)
+        self.assertIn("bias máximo", corpo)
+
+    def test_o_erro_total_continua_sendo_do_pacote_completo(self):
+        # A exatidão entrou; o erro total não. São coisas diferentes, e essa é
+        # uma decisão comercial, não analítica.
+        contexto = servicos.calcular(self.estudo)
+        item = contexto["precisao"][0]
+
+        indicadores = [i["indicador"] for i in item["avaliacao"]["indicadores"]]
+        self.assertIn("bias", indicadores)
+        self.assertNotIn("erro total", indicadores)
+
+
+class TestGradeQualitativa(TestCase):
+    """A tela de lançamento qualitativo.
+
+    Até agora o módulo EP12 só podia ser preenchido uma amostra por vez pelo
+    painel administrativo, e o que era lançado nem entrava na contagem do
+    estudo — o programa dizia "Sem dados lançados" com trinta amostras no banco
+    e recusava calcular. Este bloco guarda a grade e a contagem.
+    """
+
+    def setUp(self):
+        self.laboratorio = montar_laboratorio("Lab Q", "33.333.333/0001-33")
+        self.usuario = Usuario.objects.create_user(
+            username="analista", password="senha-longa-de-teste",
+            laboratorio=self.laboratorio, funcao=Usuario.RESPONSAVEL,
+        )
+        self.estudo = montar_estudo(self.laboratorio, self.usuario)
+        self.estudo.tipo = Estudo.QUALITATIVO
+        self.estudo.save()
+        self.estudo.niveis.all().delete()
+        self.estudo.amostras_comparacao.all().delete()
+        self.url = reverse("qualitativas_estudo", args=[self.estudo.pk])
+        self.client.force_login(self.usuario)
+
+    def _linhas(self, quantidade, referencia="Reagente", teste="Reagente"):
+        dados = {"total": servicos.MINIMO_AMOSTRAS_QUALITATIVAS}
+        for posicao in range(1, quantidade + 1):
+            dados[f"amostra_{posicao}_id"] = f"AM-{posicao:03d}"
+            dados[f"amostra_{posicao}_referencia"] = referencia
+            dados[f"amostra_{posicao}_teste"] = teste
+        return dados
+
+    def test_a_grade_abre_com_o_tamanho_usual(self):
+        resposta = self.client.get(self.url)
+
+        self.assertEqual(
+            resposta.context["grade"]["total"], servicos.MINIMO_AMOSTRAS_QUALITATIVAS
+        )
+
+    def test_grava_as_amostras_lancadas(self):
+        self.client.post(self.url, self._linhas(3))
+
+        self.assertEqual(self.estudo.amostras_qualitativas.count(), 3)
+        amostra = self.estudo.amostras_qualitativas.get(identificacao="AM-001")
+        self.assertTrue(amostra.resultado_referencia)
+        self.assertTrue(amostra.resultado_teste)
+
+    def test_aceita_as_grafias_que_o_laboratorio_usa(self):
+        dados = {"total": servicos.MINIMO_AMOSTRAS_QUALITATIVAS}
+        escritas = [
+            ("reagente", "POSITIVO"),
+            ("P", "1"),
+            ("não reagente", "NEGATIVO"),
+            ("N", "0"),
+        ]
+        for posicao, (referencia, teste) in enumerate(escritas, start=1):
+            dados[f"amostra_{posicao}_id"] = f"AM-{posicao:03d}"
+            dados[f"amostra_{posicao}_referencia"] = referencia
+            dados[f"amostra_{posicao}_teste"] = teste
+
+        self.client.post(self.url, dados)
+
+        gravadas = list(self.estudo.amostras_qualitativas.order_by("identificacao"))
+        self.assertEqual(len(gravadas), 4)
+        self.assertEqual(
+            [(a.resultado_referencia, a.resultado_teste) for a in gravadas],
+            [(True, True), (True, True), (False, False), (False, False)],
+        )
+
+    def test_indeterminado_e_recusado_e_nomeado(self):
+        # Não é reagente nem não reagente. Empurrá-lo para um dos lados
+        # falsificaria a tabela 2×2.
+        dados = {
+            "total": servicos.MINIMO_AMOSTRAS_QUALITATIVAS,
+            "amostra_1_id": "AM-001",
+            "amostra_1_referencia": "indeterminado",
+            "amostra_1_teste": "Reagente",
+        }
+
+        resposta = self.client.post(self.url, dados, follow=True)
+
+        self.assertEqual(self.estudo.amostras_qualitativas.count(), 0)
+        self.assertContains(resposta, "não é reagente nem não reagente")
+
+    def test_uma_linha_ruim_nao_derruba_as_outras(self):
+        dados = self._linhas(5)
+        dados["amostra_3_referencia"] = "talvez"
+
+        self.client.post(self.url, dados)
+
+        self.assertEqual(self.estudo.amostras_qualitativas.count(), 4)
+
+    def test_meia_amostra_e_erro_e_nao_meia_linha(self):
+        dados = {
+            "total": servicos.MINIMO_AMOSTRAS_QUALITATIVAS,
+            "amostra_1_id": "AM-001",
+            "amostra_1_referencia": "Reagente",
+            "amostra_1_teste": "",
+        }
+
+        resposta = self.client.post(self.url, dados, follow=True)
+
+        self.assertEqual(self.estudo.amostras_qualitativas.count(), 0)
+        self.assertContains(resposta, "resultado nos dois métodos")
+
+    def test_codigo_repetido_e_aceito(self):
+        # Mesma regra da grade de amostras pareadas. Duas grades irmãs
+        # recusando dados diferentes seria a pior das opções.
+        dados = self._linhas(2)
+        dados["amostra_2_id"] = "AM-001"
+
+        self.client.post(self.url, dados)
+
+        self.assertEqual(self.estudo.amostras_qualitativas.count(), 2)
+
+    def test_linha_em_branco_apaga_a_amostra(self):
+        self.client.post(self.url, self._linhas(2))
+
+        dados = self._linhas(2)
+        dados["amostra_2_referencia"] = ""
+        dados["amostra_2_teste"] = ""
+        self.client.post(self.url, dados)
+
+        self.assertEqual(self.estudo.amostras_qualitativas.count(), 1)
+
+    def test_a_grade_recusa_estudo_quantitativo(self):
+        self.estudo.tipo = Estudo.QUANTITATIVO
+        self.estudo.save()
+
+        resposta = self.client.get(self.url, follow=True)
+
+        self.assertContains(resposta, "Este estudo é quantitativo")
+
+    def test_estudo_liberado_nao_aceita_lancamento(self):
+        self.estudo.situacao = Estudo.LIBERADO
+        self.estudo.save()
+
+        resposta = self.client.get(self.url, follow=True)
+
+        self.assertContains(resposta, "não aceita alteração de dado bruto")
+
+
+class TestEstudoQualitativoAndaNoProgramaTodo(TestCase):
+    """O estudo qualitativo precisa chegar ao fim como os outros.
+
+    Antes ele não chegava a lugar nenhum: as amostras não eram contadas, o card
+    ficava parado no rascunho dizendo "Sem dados lançados" e o cálculo era
+    recusado. O motor EP12 existia e não tinha como ser usado.
+    """
+
+    def setUp(self):
+        self.laboratorio = montar_laboratorio("Lab Q", "33.333.333/0001-33")
+        self.usuario = Usuario.objects.create_user(
+            username="rt", password="senha-longa-de-teste",
+            laboratorio=self.laboratorio, funcao=Usuario.RESPONSAVEL,
+        )
+        self.estudo = montar_estudo(self.laboratorio, self.usuario)
+        self.estudo.tipo = Estudo.QUALITATIVO
+        self.estudo.save()
+        self.estudo.niveis.all().delete()
+        self.estudo.amostras_comparacao.all().delete()
+        self.client.force_login(self.usuario)
+
+        for indice in range(1, 41):
+            positivo = indice % 2 == 0
+            AmostraQualitativa.objects.create(
+                estudo=self.estudo,
+                identificacao=f"AM-{indice:03d}",
+                resultado_referencia=positivo,
+                resultado_teste=positivo,
+            )
+
+    def test_as_amostras_entram_na_contagem(self):
+        andamento = self.estudo.progresso()
+
+        self.assertEqual(andamento["qualitativo_feita"], 40)
+        self.assertTrue(andamento["iniciado"])
+        self.assertTrue(andamento["completo"])
+
+    def test_o_card_manda_para_a_grade_qualitativa(self):
+        self.assertEqual(self.estudo.tela_da_proxima_acao(), "qualitativas_estudo")
+        self.assertEqual(self.estudo.proxima_acao(), "Calcular agora")
+        self.assertEqual(self.estudo.coluna_quadro(), Estudo.COLUNA_PRONTO)
+
+    def test_o_estudo_pode_ser_calculado_e_liberado(self):
+        self.client.post(reverse("concluir_estudo", args=[self.estudo.pk]))
+        self.client.post(
+            reverse("analise_estudo", args=[self.estudo.pk]),
+            {"analise_critica": "Concordância total na amostragem.", "veredito": "APROVADO"},
+        )
+        self.client.post(reverse("liberar_estudo", args=[self.estudo.pk]))
+
+        self.estudo.refresh_from_db()
+        self.assertEqual(self.estudo.situacao, Estudo.LIBERADO)
+        self.assertEqual(self.estudo.veredito.resultado, "APROVADO")
+
+    def test_o_relatorio_sai(self):
+        self.client.post(reverse("concluir_estudo", args=[self.estudo.pk]))
+
+        resposta = self.client.get(reverse("relatorio_estudo", args=[self.estudo.pk]))
+
+        self.assertEqual(resposta.status_code, 200)
+        self.assertContains(resposta, "Sensibilidade")
+
+    def test_uma_categoria_escassa_vira_ressalva(self):
+        # Sensibilidade e especificidade são duas proporções estimadas em
+        # separado; o que importa é a contagem de cada lado, não o total.
+        sobram = self.estudo.amostras_qualitativas.filter(resultado_referencia=True)[:5]
+        self.estudo.amostras_qualitativas.filter(resultado_referencia=True).exclude(
+            pk__in=[a.pk for a in sobram]
+        ).delete()
+
+        avisos = servicos.calcular(self.estudo)["avisos"]
+
+        self.assertTrue(any("positivas na referência" in aviso for aviso in avisos))
+        self.assertTrue(any("sensibilidade" in aviso for aviso in avisos))
+
+
+class TestIntervaloDeReferenciaSoNaValidacao(TestCase):
+    """O intervalo de referência é da metodologia, não do analito.
+
+    Dois imunoensaios de FT4 imprimem faixas diferentes no laudo. Um valor único
+    no analito servia de reserva para os dois lados do estudo — e classificar os
+    resultados dos dois métodos pela mesma faixa esconde exatamente o desacordo
+    que a concordância clínica existe para medir.
+    """
+
+    def setUp(self):
+        self.laboratorio = montar_laboratorio("Lab A", "11.111.111/0001-11")
+        self.usuario = Usuario.objects.create_user(
+            username="analista", password="senha-longa-de-teste",
+            laboratorio=self.laboratorio, funcao=Usuario.ANALISTA,
+        )
+        self.estudo = montar_estudo(self.laboratorio, self.usuario)
+
+    def test_o_analito_nao_guarda_mais_intervalo(self):
+        campos = {campo.name for campo in Mensurando._meta.get_fields()}
+
+        self.assertNotIn("referencia_inferior", campos)
+        self.assertNotIn("referencia_superior", campos)
+
+    def test_sem_intervalo_no_estudo_a_concordancia_clinica_nao_e_avaliada(self):
+        # E o relatório diz isso, em vez de usar uma faixa herdada que não é de
+        # nenhum dos dois métodos.
+        contexto = servicos.calcular(self.estudo)
+
+        clinica = contexto["comparabilidade"]["clinica"]
+        self.assertEqual(clinica["avaliadas"], 0)
+        self.assertIsNone(clinica["concordancia_pct"])
+        # E o relatório registra a ressalva, em vez de omitir a medida.
+        self.assertTrue(
+            any("clínica" in aviso for aviso in contexto["avisos"]),
+            contexto["avisos"],
+        )
+
+    def test_o_intervalo_do_estudo_e_o_que_vale(self):
+        self.estudo.referencia_comparacao_inferior = Decimal("0.9")
+        self.estudo.referencia_comparacao_superior = Decimal("1.7")
+        self.estudo.save()
+
+        self.assertEqual(
+            self.estudo.intervalo_de_comparacao(), (Decimal("0.9"), Decimal("1.7"))
+        )
+
+    def test_a_tela_de_configuracoes_mostra_o_uso_do_analito(self):
+        self.client.force_login(self.usuario)
+
+        resposta = self.client.get(reverse("configuracoes"))
+
+        self.assertContains(resposta, "1 validação")
+        self.assertNotContains(resposta, "Sem intervalo de referência")
+
+
+class TestLimiteAbsolutoNaTela(TestCase):
+    """A tela mostra o limite na escala em que ele foi escrito.
+
+    Ficha de TSH com "6%, mas abaixo de 0,50 mU/L use ± 0,06 mU/L". No nível 1,
+    de concentração 0,30, a tela imprimia "± 20,00% · bias máximo" — que é o
+    limite absoluto convertido, sem dizer que era. Quem escreveu 6% na ficha lia
+    20% na tela e concluía que o programa estava errado.
+    """
+
+    def setUp(self):
+        self.laboratorio = montar_laboratorio("Lab A", "11.111.111/0001-11")
+        self.usuario = Usuario.objects.create_user(
+            username="analista", password="senha-longa-de-teste",
+            laboratorio=self.laboratorio, funcao=Usuario.RESPONSAVEL,
+        )
+        self.estudo = montar_estudo(self.laboratorio, self.usuario)
+
+        ficha = self.estudo.especificacao
+        ficha.bias_derivado = False
+        ficha.bias_maximo_pct = Decimal("6.00")
+        ficha.bias_referencia = "50% do erro total do provedor"
+        ficha.bias_limiar_absoluto = Decimal("2.0000")
+        ficha.bias_maximo_absoluto = Decimal("0.0600")
+        ficha.bias_referencia_absoluto = "para resultados ≤ 2,00, ± 0,06"
+        ficha.save()
+
+        # Alvo do grupo de pares abaixo do limiar: vale a regra absoluta.
+        self.nivel = self.estudo.niveis.get(numero=1)
+        self.nivel.media_interlaboratorial = Decimal("1.2000")
+        self.nivel.save()
+        self.client.force_login(self.usuario)
+        self.url = reverse("resultado_estudo", args=[self.estudo.pk])
+
+    def test_o_limite_aparece_na_unidade_de_medida(self):
+        resposta = self.client.get(self.url)
+
+        self.assertContains(resposta, "0,0600 ng/dL")
+        self.assertContains(resposta, "regra absoluta")
+
+    def test_a_conversao_aparece_nomeada_e_nao_sozinha(self):
+        # 0,06 / 1,20 = 5,00%. O número pode aparecer, desde que dito o que é.
+        resposta = self.client.get(self.url)
+
+        self.assertContains(resposta, "nesta concentração")
+        self.assertContains(resposta, "para resultados ≤ 2,00")
+
+    def test_a_regra_percentual_continua_em_porcentagem(self):
+        self.nivel.media_interlaboratorial = Decimal("5.0000")
+        self.nivel.save()
+
+        resposta = self.client.get(self.url)
+
+        self.assertContains(resposta, "&plusmn; 6,00%")
+        self.assertNotContains(resposta, "regra absoluta")
+
+    def test_o_relatorio_mostra_a_mesma_coisa(self):
+        self.client.post(reverse("concluir_estudo", args=[self.estudo.pk]))
+
+        resposta = self.client.get(reverse("relatorio_estudo", args=[self.estudo.pk]))
+
+        self.assertContains(resposta, "0,0600 ng/dL")
+        self.assertContains(resposta, "regra absoluta")
+
+
+class TestConcentracaoQueResolveOLimite(TestCase):
+    """O limite de aceitação não pode depender do resultado que ele julga.
+
+    A regra do limite absoluto existe porque a concentração do MATERIAL é
+    baixa. Com a média medida decidindo, o critério se mexia conforme a leitura:
+    um controle de alvo 0,50 medido a 0,48 caía na regra absoluta e ganhava
+    folga; medido a 0,51 caía na percentual. Um limite que depende do que se
+    mediu não é critério de aceitação.
+    """
+
+    def setUp(self):
+        self.laboratorio = montar_laboratorio("Lab A", "11.111.111/0001-11")
+        self.usuario = Usuario.objects.create_user(
+            username="analista", password="senha-longa-de-teste",
+            laboratorio=self.laboratorio, funcao=Usuario.ANALISTA,
+        )
+        self.estudo = montar_estudo(self.laboratorio, self.usuario)
+        self.nivel = self.estudo.niveis.get(numero=1)
+
+    def test_usa_a_media_do_grupo_de_pares_quando_informada(self):
+        self.nivel.media_interlaboratorial = Decimal("1.2000")
+        self.nivel.save()
+
+        item = servicos.calcular(self.estudo)["precisao"][0]
+
+        self.assertAlmostEqual(item["concentracao"], 1.2, places=4)
+        self.assertEqual(item["origem_da_concentracao"], "média interlaboratorial")
+
+    def test_sem_alvo_do_grupo_volta_para_a_media_medida_e_diz_isso(self):
+        item = servicos.calcular(self.estudo)["precisao"][0]
+
+        self.assertAlmostEqual(item["concentracao"], item["estatistica"]["media"], places=4)
+        self.assertEqual(item["origem_da_concentracao"], "média das réplicas")
+
+    def test_a_leitura_do_metodo_nao_muda_mais_o_limite(self):
+        # Mesmo material, mesma ficha: um método que lê alto e outro que lê
+        # baixo têm de ser julgados pelo mesmo critério.
+        ficha = self.estudo.especificacao
+        ficha.bias_derivado = False
+        ficha.bias_maximo_pct = Decimal("6.00")
+        ficha.bias_limiar_absoluto = Decimal("1.5000")
+        ficha.bias_maximo_absoluto = Decimal("0.0600")
+        ficha.bias_referencia_absoluto = "abaixo de 1,50, ± 0,06"
+        ficha.save()
+
+        self.nivel.media_interlaboratorial = Decimal("1.4000")
+        self.nivel.save()
+        antes = servicos.calcular(self.estudo)["precisao"][0]["indicador_bias"]
+
+        # As réplicas sobem 40%, atravessando o limiar. O limite não se mexe.
+        for replica in Replica.objects.filter(nivel=self.nivel):
+            replica.valor = replica.valor * Decimal("1.4")
+            replica.save(update_fields=["valor"])
+
+        depois = servicos.calcular(self.estudo)["precisao"][0]["indicador_bias"]
+
+        self.assertEqual(antes["tipo_limite"], depois["tipo_limite"])
+        self.assertEqual(antes["limite_absoluto"], depois["limite_absoluto"])
+        self.assertEqual(antes["limite_pct"], depois["limite_pct"])
+
+    def test_a_tela_diz_qual_concentracao_resolveu_o_limite(self):
+        self.nivel.media_interlaboratorial = Decimal("1.2000")
+        self.nivel.save()
+        self.client.force_login(self.usuario)
+
+        resposta = self.client.get(reverse("resultado_estudo", args=[self.estudo.pk]))
+
+        self.assertContains(resposta, "Limites resolvidos em")
+        self.assertContains(resposta, "média interlaboratorial")
+
+
+class TestTipografiaDoDocumentoImpresso(TestCase):
+    """Garantias de paginação que ninguém nota até faltarem.
+
+    Um relatório de validação é arquivado em papel e conferido linha a linha.
+    Cabeçalho de tabela que não se repete na página seguinte, título sozinho no
+    pé da folha e nível partido ao meio não são detalhes estéticos: são o que
+    faz alguém conferir a coluna errada.
+    """
+
+    def setUp(self):
+        self.laboratorio = montar_laboratorio("Lab A", "11.111.111/0001-11")
+        self.usuario = Usuario.objects.create_user(
+            username="rt", password="senha-longa-de-teste",
+            laboratorio=self.laboratorio, funcao=Usuario.RESPONSAVEL,
+        )
+        self.estudo = montar_estudo(self.laboratorio, self.usuario)
+        self.client.force_login(self.usuario)
+        self.client.post(reverse("concluir_estudo", args=[self.estudo.pk]))
+        self.corpo = self.client.get(
+            reverse("relatorio_estudo", args=[self.estudo.pk])
+        ).content.decode()
+
+    def test_toda_tabela_tem_cabecalho_que_se_repete(self):
+        # Sem <thead>, a parte da tabela que cai na página seguinte chega sem
+        # nome de coluna: números soltos numa folha de registro de qualidade.
+        #
+        # A folha de estilo cita "<thead>" num comentário, então a contagem
+        # precisa olhar só o corpo do documento.
+        import re
+
+        corpo = re.sub(r"<style>.*?</style>", "", self.corpo, flags=re.S)
+        self.assertGreater(corpo.count("<table"), 0)
+        self.assertEqual(corpo.count("<table"), corpo.count("<thead>"))
+        self.assertIn("display: table-header-group", self.corpo)
+
+    def test_as_secoes_sao_numeradas_automaticamente(self):
+        # Numa auditoria se aponta para "a seção 4", não para "aquela do meio".
+        self.assertIn("counter-reset: secao", self.corpo)
+        self.assertIn("counter-increment: secao", self.corpo)
+
+    def test_titulo_nunca_fica_orfao_no_pe_da_pagina(self):
+        self.assertIn("break-after: avoid", self.corpo)
+        self.assertIn("orphans: 3", self.corpo)
+        self.assertIn("widows: 3", self.corpo)
+
+    def test_um_nivel_nao_parte_ao_meio(self):
+        # A estatística das corridas e a avaliação que sai dela pertencem uma à
+        # outra; metade numa página e metade na outra não se lê.
+        self.assertIn('class="nivel-bloco"', self.corpo)
+        self.assertIn(".nivel-bloco, .veredito-final, .assinatura { break-inside: avoid; }", self.corpo)
+
+    def test_cada_sistema_analitico_leva_a_propria_metodologia(self):
+        # Na grade corrida anterior, "Metodologia" aparecia duas vezes e podia
+        # cair numa linha sozinha, longe do equipamento a que pertencia.
+        self.assertIn("Sistema em teste", self.corpo)
+        self.assertIn("Sistema de comparação", self.corpo)
+        self.assertEqual(self.corpo.count('class="sistema"'), 2)
+
+    def test_a_orientacao_de_impressao_nao_entra_no_papel(self):
+        self.assertIn(
+            ".comandos, .recados, .como-salvar { display: none !important; }", self.corpo
+        )
+
+
+class TestRelatorioQualitativoNaoImprimeCriterioQuantitativo(TestCase):
+    """Um relatório de EP12 não é julgado por CV, bias e erro total.
+
+    O documento imprimia "Desenho da precisão — 5 dias consecutivos, 5 réplicas
+    por dia" num estudo sem réplica nenhuma, e a tabela de erro total, bias e
+    imprecisão ao lado dos resultados — fazendo parecer que o método tinha sido
+    avaliado contra limites que nunca entraram em conta nenhuma.
+    """
+
+    def setUp(self):
+        self.laboratorio = montar_laboratorio("Lab Q", "33.333.333/0001-33")
+        self.usuario = Usuario.objects.create_user(
+            username="rt", password="senha-longa-de-teste",
+            laboratorio=self.laboratorio, funcao=Usuario.RESPONSAVEL,
+        )
+        self.estudo = montar_estudo(self.laboratorio, self.usuario)
+        self.estudo.tipo = Estudo.QUALITATIVO
+        self.estudo.save()
+        self.estudo.niveis.all().delete()
+        self.estudo.amostras_comparacao.all().delete()
+        for indice in range(1, 41):
+            positivo = indice % 2 == 0
+            AmostraQualitativa.objects.create(
+                estudo=self.estudo, identificacao=f"AM-{indice:03d}",
+                resultado_referencia=positivo, resultado_teste=positivo,
+            )
+        self.client.force_login(self.usuario)
+        self.client.post(reverse("concluir_estudo", args=[self.estudo.pk]))
+        self.corpo = self.client.get(
+            reverse("relatorio_estudo", args=[self.estudo.pk])
+        ).content.decode()
+
+    def test_nao_descreve_um_desenho_de_precisao_que_nao_existiu(self):
+        self.assertNotIn("Desenho da precisão", self.corpo)
+
+    def test_nao_imprime_limites_de_metodo_quantitativo(self):
+        self.assertNotIn("Erro total máximo", self.corpo)
+        self.assertNotIn("Bias máximo", self.corpo)
+
+    def test_diz_contra_o_que_o_metodo_foi_avaliado(self):
+        self.assertIn("concordância com o método de referência", self.corpo)
+        self.assertIn("Sensibilidade", self.corpo)
+
+    def test_o_estudo_quantitativo_continua_trazendo_os_limites(self):
+        # Noutro laboratório, com usuário próprio: o analito é único por
+        # laboratório e este já tem um FT4 em soro, e um usuário só enxerga os
+        # estudos do laboratório dele.
+        outro = montar_laboratorio("Lab R", "44.444.444/0001-44")
+        dono = Usuario.objects.create_user(
+            username="rt.outro", password="senha-longa-de-teste",
+            laboratorio=outro, funcao=Usuario.RESPONSAVEL,
+        )
+        quantitativo = montar_estudo(outro, dono)
+        self.client.force_login(dono)
+        self.client.post(reverse("concluir_estudo", args=[quantitativo.pk]))
+
+        corpo = self.client.get(
+            reverse("relatorio_estudo", args=[quantitativo.pk])
+        ).content.decode()
+
+        self.assertIn("Erro total máximo", corpo)
+        self.assertIn("Desenho da precisão", corpo)

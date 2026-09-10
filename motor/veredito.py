@@ -33,10 +33,39 @@ MODULO_COMPLETO = "completo"
 # Fator z do Erro Total de Westgard (95% unilateral).
 FATOR_ERRO_TOTAL = 1.65
 
+# --- De onde vem o bias ------------------------------------------------------
+#
+# São dois erros sistemáticos diferentes, medidos por estudos diferentes, e
+# tratá-los como um só indicador "bias" tirava a exatidão de quem tem direito a
+# ela:
+#
+# * **Interlaboratorial** — a média das réplicas contra a média do mesmo lote de
+#   controle no grupo de pares. Sai inteira do estudo de PRECISÃO: são as
+#   réplicas do laboratório e um número do boletim do programa. Não depende de
+#   amostra pareada nenhuma.
+# * **Regressão** — o bias estimado pela reta, na concentração do nível. Sai do
+#   estudo de COMPARABILIDADE, que é onde existem amostras de paciente medidas
+#   nos dois sistemas.
+#
+# Antes as duas eram a capacidade "bias", atribuída à comparabilidade. Quem
+# contratava só precisão lançava a média do grupo de pares, via a exatidão
+# calculada na tela e não recebia limite nem situação — o número aparecia sem
+# veredito, que é a pior forma de mostrá-lo.
+BIAS_INTERLABORATORIAL = "bias_interlaboratorial"
+BIAS_REGRESSAO = "bias_regressao"
+
+# A origem que o serviço informa, traduzida para a capacidade que ela exige.
+_CAPACIDADE_DA_ORIGEM = {
+    "interlaboratorial": BIAS_INTERLABORATORIAL,
+    "regressao": BIAS_REGRESSAO,
+}
+
 _CAPACIDADES = {
-    MODULO_PRECISAO: {"imprecisao"},
-    MODULO_COMPARABILIDADE: {"bias"},
-    MODULO_COMPLETO: {"imprecisao", "bias", "erro_total", "sigma"},
+    MODULO_PRECISAO: {"imprecisao", BIAS_INTERLABORATORIAL},
+    MODULO_COMPARABILIDADE: {BIAS_REGRESSAO},
+    MODULO_COMPLETO: {
+        "imprecisao", BIAS_INTERLABORATORIAL, BIAS_REGRESSAO, "erro_total", "sigma"
+    },
 }
 
 
@@ -71,6 +100,11 @@ def avaliar_imprecisao(
         "indicador": "imprecisão",
         "observado_pct": cv_pct,
         "limite_pct": resolvido["limite_pct"],
+        # Quando a regra absoluta vale, o percentual acima é o limite absoluto
+        # convertido nesta concentração — e sozinho ele engana: "± 0,06 mU/L"
+        # vira "± 20%" num controle de 0,30, e quem escreveu a ficha não
+        # reconhece o próprio critério. Os dois viajam juntos daqui para frente.
+        "limite_absoluto": resolvido["limite_absoluto"],
         "tipo_limite": resolvido["tipo"],
         "referencia": resolvido["referencia"],
         "status": comparacao["status"],
@@ -91,6 +125,11 @@ def avaliar_bias(
         "indicador": "bias",
         "observado_pct": bias_pct,
         "limite_pct": resolvido["limite_pct"],
+        # Quando a regra absoluta vale, o percentual acima é o limite absoluto
+        # convertido nesta concentração — e sozinho ele engana: "± 0,06 mU/L"
+        # vira "± 20%" num controle de 0,30, e quem escreveu a ficha não
+        # reconhece o próprio critério. Os dois viajam juntos daqui para frente.
+        "limite_absoluto": resolvido["limite_absoluto"],
         "tipo_limite": resolvido["tipo"],
         "referencia": resolvido["referencia"],
         "status": comparacao["status"],
@@ -126,6 +165,11 @@ def avaliar_erro_total(
         "indicador": "erro total",
         "observado_pct": te,
         "limite_pct": resolvido["limite_pct"],
+        # Quando a regra absoluta vale, o percentual acima é o limite absoluto
+        # convertido nesta concentração — e sozinho ele engana: "± 0,06 mU/L"
+        # vira "± 20%" num controle de 0,30, e quem escreveu a ficha não
+        # reconhece o próprio critério. Os dois viajam juntos daqui para frente.
+        "limite_absoluto": resolvido["limite_absoluto"],
         "tipo_limite": resolvido["tipo"],
         "referencia": resolvido["referencia"],
         "status": comparacao["status"],
@@ -172,8 +216,14 @@ def avaliar_nivel(
     concentracao: float | None = None,
     cv_pct: float | None = None,
     bias_pct: float | None = None,
+    origem_do_bias: str | None = None,
 ) -> dict:
-    """Avalia um nível de controle com tudo que o módulo contratado permite."""
+    """Avalia um nível de controle com tudo que o módulo contratado permite.
+
+    ``origem_do_bias`` diz qual estudo produziu o erro sistemático — e portanto
+    qual módulo precisa estar contratado para que ele seja avaliado. Ver a nota
+    em ``_CAPACIDADES``.
+    """
     permitido = capacidades(modulo)
     indicadores = []
     nao_contratados = []
@@ -187,7 +237,18 @@ def avaliar_nivel(
     else:
         nao_contratados.append("imprecisão")
 
-    if "bias" in permitido:
+    # Origem conhecida decide pela capacidade correspondente. Origem ausente —
+    # porque não há bias medido, ou porque quem chamou não informou — cai na
+    # regra antiga: basta o módulo avaliar algum bias. É o que faz o indicador
+    # continuar entrando como INDETERMINADO quando falta a média do grupo de
+    # pares, em vez de sumir e o veredito não registrar que faltou.
+    exigida = _CAPACIDADE_DA_ORIGEM.get(origem_do_bias or "")
+    if exigida is None:
+        avalia_bias = bool(permitido & {BIAS_INTERLABORATORIAL, BIAS_REGRESSAO})
+    else:
+        avalia_bias = exigida in permitido
+
+    if avalia_bias:
         indicadores.append(avaliar_bias(bias_pct, especificacao.bias, concentracao))
     else:
         nao_contratados.append("bias")
@@ -239,7 +300,7 @@ def avaliar_estudo(
     """Veredito do estudo inteiro, nível a nível.
 
     Cada item de ``niveis`` é um dicionário com ``nivel`` e, conforme o módulo,
-    ``concentracao``, ``cv_pct`` e ``bias_pct``.
+    ``concentracao``, ``cv_pct``, ``bias_pct`` e ``origem_do_bias``.
     """
     pendencias = especificacao.pendencias()
 
@@ -251,6 +312,10 @@ def avaliar_estudo(
             concentracao=n.get("concentracao"),
             cv_pct=n.get("cv_pct"),
             bias_pct=n.get("bias_pct"),
+            # Ausente quando quem chamou não informa: aí vale a regra permissiva
+            # de ``avaliar_nivel``. Fixar um padrão aqui faria a comparabilidade
+            # perder o bias da reta por causa de uma origem que ela não declarou.
+            origem_do_bias=n.get("origem_do_bias"),
         )
         for n in niveis
     ]

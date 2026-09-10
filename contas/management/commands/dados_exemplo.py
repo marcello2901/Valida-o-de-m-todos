@@ -125,12 +125,9 @@ class Command(BaseCommand):
             laboratorio=laboratorio,
             nome="FT4",
             material_biologico="soro",
-            defaults={
-                "unidade_medida": "ng/dL",
-                # Intervalo de referência usual de T4 livre em adultos.
-                "referencia_inferior": Decimal("0.8000"),
-                "referencia_superior": Decimal("1.8000"),
-            },
+            # O intervalo de referência é da metodologia, e cada estudo declara
+            # o seu — o do método de comparação e o do método em teste.
+            defaults={"unidade_medida": "ng/dL"},
         )
         return mensurando
 

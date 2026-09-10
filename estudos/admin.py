@@ -58,7 +58,25 @@ class SomenteLeituraAposLiberacao:
         return super().has_delete_permission(request, obj)
 
 
-class NivelEstudoInline(SomenteLeituraAposLiberacao, admin.TabularInline):
+class AtalhoDeLancamento:
+    """Acrescenta ao inline um painel com o botão da tela de lançamento.
+
+    O caminho até as grades passava obrigatoriamente pela tela de resultado.
+    Quem chega com a planilha pronta — que é o caso comum, o laboratório roda o
+    estudo primeiro e digita depois — tinha de criar o estudo, sair do cadastro,
+    abrir o resultado e voltar, sem que nada na tela dissesse que a grade
+    existia. O atalho fica na seção a que pertence, e o rótulo diz o que a tela
+    faz em vez de nomear a tabela.
+    """
+
+    template = "admin/estudos/inline_com_atalho.html"
+    atalho_titulo = ""
+    atalho_explicacao = ""
+    atalho_rota = ""
+    atalho_botao = ""
+
+
+class NivelEstudoInline(SomenteLeituraAposLiberacao, AtalhoDeLancamento, admin.TabularInline):
     """Só o que define o nível: qual é e com que material foi medido.
 
     A média interlaboratorial e o nome do programa saíram daqui de propósito.
@@ -71,17 +89,43 @@ class NivelEstudoInline(SomenteLeituraAposLiberacao, admin.TabularInline):
     extra = 1
     fields = ["numero", "controle"]
 
+    atalho_titulo = "Réplicas"
+    atalho_explicacao = (
+        "As medições de cada nível são lançadas numa grade só, com os níveis lado "
+        "a lado. Dá para colar um bloco inteiro vindo da planilha, e é lá que se "
+        "informa a média do programa interlaboratorial de cada lote."
+    )
+    atalho_rota = "replicas_estudo"
+    atalho_botao = "Lançar réplicas de controle →"
 
-class AmostraComparacaoInline(SomenteLeituraAposLiberacao, admin.TabularInline):
+
+class AmostraComparacaoInline(SomenteLeituraAposLiberacao, AtalhoDeLancamento, admin.TabularInline):
     model = AmostraComparacao
     extra = 0
     fields = ["identificacao", "valor_comparacao", "valor_teste", "excluida", "justificativa_exclusao"]
 
+    atalho_titulo = "Lançamento das amostras pareadas"
+    atalho_explicacao = (
+        "A grade abre com o mínimo do EP09 e aceita um bloco colado da planilha: "
+        "identificação, resultado no método de comparação e resultado no método em "
+        "teste. Uma linha por vez, aqui, são quarenta formulários."
+    )
+    atalho_rota = "amostras_estudo"
+    atalho_botao = "Lançar amostras pareadas →"
 
-class AmostraQualitativaInline(SomenteLeituraAposLiberacao, admin.TabularInline):
+
+class AmostraQualitativaInline(SomenteLeituraAposLiberacao, AtalhoDeLancamento, admin.TabularInline):
     model = AmostraQualitativa
     extra = 0
     fields = ["identificacao", "resultado_referencia", "resultado_teste"]
+
+    atalho_titulo = "Lançamento das amostras qualitativas"
+    atalho_explicacao = (
+        "Grade com as duas colunas de resultado, colável da planilha. Aceita "
+        "“reagente”/“não reagente”, “positivo”/“negativo”, “P”/“N” ou 1/0."
+    )
+    atalho_rota = "qualitativas_estudo"
+    atalho_botao = "Lançar amostras qualitativas →"
 
 
 @admin.register(Estudo)

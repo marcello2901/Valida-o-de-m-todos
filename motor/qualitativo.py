@@ -21,6 +21,23 @@ from typing import Sequence
 
 from . import estatistica as est
 
+# Tamanho com que a grade de lançamento abre. Não é um número que o EP12 fixe
+# como mínimo absoluto — o que o procedimento pede é amostragem suficiente em
+# CADA categoria, porque sensibilidade e especificidade são proporções
+# estimadas separadamente. Trinta amostras todas negativas não estimam
+# sensibilidade nenhuma, por mais amostras que sejam.
+#
+# Quarenta é o tamanho usual de um estudo de verificação pelo usuário, e é o
+# mesmo número com que a grade de amostras pareadas abre — dois grids que abrem
+# com contagens diferentes só confundem. O que de fato vira ressalva no
+# relatório é a contagem por categoria, abaixo.
+MINIMO_AMOSTRAS_EP12 = 40
+
+# Abaixo disto numa das categorias, a proporção estimada tem intervalo de
+# confiança largo demais para sustentar uma conclusão — 4 positivos dão uma
+# sensibilidade que salta 25 pontos com um único resultado a mais.
+MINIMO_POR_CATEGORIA = 10
+
 
 def tabela_contingencia(referencia: Sequence[bool], teste: Sequence[bool]) -> dict:
     """Monta a tabela 2×2 a partir de dois vetores de resultados positivos/negativos.

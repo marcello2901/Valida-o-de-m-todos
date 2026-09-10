@@ -197,3 +197,54 @@ class TestExplicacaoDeAcessoNoPainel(TestCase):
         resposta = self.client.get(reverse("admin:index"), follow=True)
 
         self.assertEqual(resposta.redirect_chain[0][0], "/admin/login/?next=/admin/")
+
+
+class TestAtalhosParaAsGradesDeLancamento(TestCase):
+    """O cadastro do estudo leva às telas de lançamento.
+
+    O caminho até as grades passava obrigatoriamente pela tela de resultado:
+    quem chega com a planilha pronta — que é o caso comum, o laboratório roda o
+    estudo primeiro e digita depois — tinha de criar o estudo, sair do cadastro,
+    abrir o resultado e voltar, sem que nada na tela dissesse que a grade
+    existia.
+    """
+
+    def setUp(self):
+        self.laboratorio = montar_laboratorio("Lab A", "11.111.111/0001-11")
+        self.suporte = Usuario.objects.create_user(
+            username="suporte", password="senha-longa-de-teste",
+            is_staff=True, is_superuser=True,
+        )
+        self.estudo = montar_estudo(self.laboratorio, self.suporte)
+        self.client.force_login(self.suporte)
+        self.url = reverse("admin:estudos_estudo_change", args=[self.estudo.pk])
+
+    def test_a_secao_de_replicas_fica_abaixo_dos_niveis(self):
+        resposta = self.client.get(self.url)
+
+        corpo = resposta.content.decode()
+        niveis = corpo.index("Níveis do estudo")
+        replicas = corpo.index("Lançar réplicas de controle")
+        amostras = corpo.index("Lançar amostras pareadas")
+        self.assertLess(niveis, replicas)
+        self.assertLess(replicas, amostras)
+
+    def test_leva_para_as_tres_grades(self):
+        resposta = self.client.get(self.url)
+
+        for rota in ("replicas_estudo", "amostras_estudo", "qualitativas_estudo"):
+            self.assertContains(resposta, reverse(rota, args=[self.estudo.pk]))
+
+    def test_no_formulario_de_criacao_o_botao_da_lugar_a_um_recado(self):
+        # Sem estudo salvo não há para onde ir, e um link quebrado seria pior
+        # do que a ausência dele.
+        resposta = self.client.get(reverse("admin:estudos_estudo_add"))
+
+        self.assertContains(resposta, "Réplicas")
+        self.assertContains(resposta, "Salve o estudo primeiro")
+        self.assertNotContains(resposta, "Lançar réplicas de controle")
+
+    def test_o_titulo_da_secao_de_replicas_e_o_pedido(self):
+        resposta = self.client.get(self.url)
+
+        self.assertContains(resposta, "<h2>Réplicas</h2>", html=True)

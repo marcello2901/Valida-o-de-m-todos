@@ -322,6 +322,59 @@ def amostras(request, estudo_id: int):
     )
 
 
+@login_required
+def qualitativas(request, estudo_id: int):
+    """Grade de amostras qualitativas: reagente / não reagente nos dois métodos.
+
+    Existe pelo mesmo motivo das outras duas — e por um pior: até agora o
+    módulo qualitativo só podia ser preenchido uma amostra por vez pelo painel
+    administrativo, e as amostras lançadas nem eram contadas pelo programa.
+    """
+    estudo = _estudo_do_usuario(request, estudo_id)
+
+    if estudo.tipo != Estudo.QUALITATIVO:
+        messages.error(
+            request,
+            "Este estudo é quantitativo. As amostras pareadas são lançadas na grade de amostras.",
+        )
+        return redirect("resultado_estudo", estudo_id=estudo.pk)
+
+    if estudo.situacao == Estudo.LIBERADO:
+        messages.error(request, "Estudo liberado não aceita alteração de dado bruto.")
+        return redirect("resultado_estudo", estudo_id=estudo.pk)
+
+    if request.method == "POST":
+        total = _inteiro(request.POST.get("total"), servicos.MINIMO_AMOSTRAS_QUALITATIVAS)
+        if request.POST.get("acao") == "adicionar_linhas":
+            destino = f"{reverse('qualitativas_estudo', args=[estudo.pk])}?linhas={total + servicos.PASSO_DE_LINHAS}"
+            return redirect(destino)
+
+        resumo = servicos.salvar_grade_qualitativa(estudo, request.POST, total)
+        if resumo["erros"]:
+            _relatar_pendencias(request, resumo, "amostra")
+        else:
+            messages.success(
+                request,
+                f"{resumo['gravadas']} amostra(s) gravada(s)"
+                + (f", {resumo['apagadas']} apagada(s)." if resumo["apagadas"] else "."),
+            )
+            return redirect("resultado_estudo", estudo_id=estudo.pk)
+        return redirect("qualitativas_estudo", estudo_id=estudo.pk)
+
+    grade = servicos.montar_grade_qualitativa(estudo, _inteiro(request.GET.get("linhas"), 0))
+    return render(
+        request,
+        "estudos/qualitativas.html",
+        {
+            "secao": "quadro",
+            "estudo": estudo,
+            "grade": grade,
+            "andamento": estudo.progresso(),
+            "passo": servicos.PASSO_DE_LINHAS,
+        },
+    )
+
+
 def _relatar_pendencias(request, resumo, unidade: str):
     """Diz o que entrou e o que ficou de fora, sem desfazer o que entrou.
 

@@ -1,0 +1,150 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block titulo %}Lançar amostras qualitativas — {{ estudo.mensurando.nome }}{% endblock %}
+
+{% block estilo %}
+<style>
+  /* Mesma metáfora das outras duas grades: pistas lado a lado, cartão por cima.
+     Aqui cada linha tem identificação e os dois resultados categóricos. */
+  .pistas { display: flex; gap: 14px; align-items: start; flex-wrap: wrap; }
+  .pista { flex: 1 1 400px; min-width: 380px; max-width: 640px; padding: 0; overflow: hidden; }
+
+  .cabeca {
+    display: flex; align-items: center; gap: 7px;
+    padding: 9px 12px; border-bottom: 1px solid var(--grade); background: var(--faixa);
+    font-size: 10px; font-weight: 700; color: var(--tinta-3);
+    text-transform: uppercase; letter-spacing: .06em;
+  }
+  .cabeca .col-ordem { width: 20px; flex-shrink: 0; text-align: right; }
+  .cabeca .col-id { width: 124px; flex-shrink: 0; }
+  .cabeca .col-valor { flex: 1; }
+
+  .linhas { padding: 6px 12px 12px; }
+  .linha { display: flex; align-items: center; gap: 7px; padding: 2px 0; }
+  .ordem {
+    width: 20px; flex-shrink: 0; font-size: 10.5px; color: var(--tinta-3);
+    text-align: right; font-variant-numeric: tabular-nums;
+  }
+  .linha .id { width: 124px; flex-shrink: 0; }
+  .linha .valor { flex: 1; }
+  .seta-par { color: var(--tinta-3); flex-shrink: 0; }
+
+  .rodape-fixo {
+    position: sticky; bottom: 0; margin-top: 16px; padding: 12px 0 4px;
+    background: linear-gradient(to top, var(--plano) 72%, transparent);
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  }
+</style>
+{% endblock %}
+
+{% block scripts %}<script src="{% static 'js/colar.js' %}"></script>{% endblock %}
+
+{% block corpo %}
+<div class="barra">
+  <a href="{% url 'resultado_estudo' estudo.pk %}" class="botao" title="Ver o resultado desta validação">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 6l-6 6 6 6"/></svg>
+    Ver resultado
+  </a>
+  <div>
+    <h1 class="display">Lançar amostras qualitativas</h1>
+    <p class="sub">
+      {{ estudo.mensurando.nome }} &middot;
+      {{ estudo.sistema_comparacao.equipamento|default:"método de referência" }} &rarr;
+      {{ estudo.sistema_teste.equipamento }} &middot;
+      {{ andamento.qualitativo_feita }} amostra{{ andamento.qualitativo_feita|pluralize }} lançada{{ andamento.qualitativo_feita|pluralize }}
+    </p>
+  </div>
+  <div class="cresce"></div>
+  {% if andamento.qualitativo_faltam %}
+    <span class="selo selo--atencao">Faltam {{ andamento.qualitativo_faltam }} para o tamanho usual</span>
+  {% else %}
+    <span class="selo selo--neutro">Tamanho usual atingido</span>
+  {% endif %}
+</div>
+
+<div class="area">
+  {% comment %}
+    O que importa num estudo qualitativo não é o total de amostras: é quantas
+    há de cada lado. Sensibilidade sai só dos positivos de referência e
+    especificidade só dos negativos, então trinta amostras todas negativas não
+    estimam sensibilidade nenhuma. Dizer isso aqui é o que evita o estudo
+    chegar ao fim com uma metade vazia.
+  {% endcomment %}
+  <p class="nota" style="margin: 0 0 14px">
+    A tela abre com <strong>{{ grade.minimo }} linhas</strong>, o tamanho usual de uma
+    verificação pelo usuário. Distribua entre <strong>reagentes e não reagentes</strong>:
+    a sensibilidade é estimada só com os positivos da referência e a especificidade só
+    com os negativos, então uma metade vazia não produz conclusão.
+    O botão no rodapé acrescenta {{ passo }} linhas de cada vez.
+  </p>
+
+  <p class="nota" style="margin: 0 0 12px">
+    Dá para colar direto da planilha: clique na célula de onde quer começar e
+    tecle <strong>Ctrl+V</strong>. Vale <em>reagente</em>/<em>não reagente</em>,
+    <em>positivo</em>/<em>negativo</em>, <em>P</em>/<em>N</em> ou 1/0 &mdash; e maiúsculas
+    não fazem diferença.
+  </p>
+  <p class="aviso-colagem" data-aviso-colagem hidden></p>
+
+  <datalist id="resultados-qualitativos">
+    <option value="Reagente"></option>
+    <option value="Não reagente"></option>
+  </datalist>
+
+  <form method="post">
+    {% csrf_token %}
+    <input type="hidden" name="total" value="{{ grade.total }}">
+
+    <div class="pistas" data-grade="qualitativas">
+      {% for pista in grade.pistas %}
+      <section class="cartao pista">
+        <div class="cabeca">
+          <span class="col-ordem">#</span>
+          <span class="col-id">Amostra</span>
+          <span class="col-valor">Referência</span>
+          <span style="width: 16px"></span>
+          <span class="col-valor">Método em teste</span>
+        </div>
+        <div class="linhas">
+          {% for linha in pista %}
+          <div class="linha">
+            <span class="ordem">{{ linha.posicao }}</span>
+            <input type="text" class="id" name="amostra_{{ linha.posicao }}_id"
+                   value="{{ linha.identificacao }}" placeholder="{{ linha.sugestao }}"
+                   data-linha="{{ linha.posicao }}" data-coluna="0"
+                   aria-label="Identificação da amostra {{ linha.posicao }}">
+            <input type="text" class="valor" name="amostra_{{ linha.posicao }}_referencia"
+                   value="{{ linha.referencia }}" list="resultados-qualitativos"
+                   data-linha="{{ linha.posicao }}" data-coluna="1"
+                   aria-label="Resultado da amostra {{ linha.posicao }} no método de referência">
+            <span class="seta-par" aria-hidden="true">&rarr;</span>
+            <input type="text" class="valor" name="amostra_{{ linha.posicao }}_teste"
+                   value="{{ linha.teste }}" list="resultados-qualitativos"
+                   data-linha="{{ linha.posicao }}" data-coluna="2"
+                   aria-label="Resultado da amostra {{ linha.posicao }} no método em teste">
+          </div>
+          {% endfor %}
+        </div>
+      </section>
+      {% endfor %}
+    </div>
+
+    <div class="rodape-fixo">
+      <button type="submit" class="botao botao--primario">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7"/></svg>
+        Salvar amostras
+      </button>
+      <button type="submit" name="acao" value="adicionar_linhas" class="botao">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        Mais {{ passo }} linhas
+      </button>
+      <span class="nota">
+        A identificação em branco recebe a sugerida. Uma amostra só conta com os
+        dois resultados preenchidos &mdash; resultado indeterminado fica de fora,
+        porque não cabe na tabela 2&times;2.
+      </span>
+    </div>
+  </form>
+</div>
+{% endblock %}

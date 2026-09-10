@@ -177,7 +177,7 @@
       <span class="ponto" style="background: var(--aprovado)"></span>
       <h2>Mensurandos</h2>
       <span class="conta">{{ analitos|length }}</span>
-      <p class="explica">Unidade, material biológico e intervalo de referência de cada analito.</p>
+      <p class="explica">Unidade e material biológico de cada analito.</p>
     </header>
     <div class="grade">
       {% for bloco in analitos %}
@@ -189,22 +189,16 @@
             <div class="abaixo">{{ bloco.mensurando.unidade_medida }} &middot; {{ bloco.mensurando.material_biologico }}</div>
           </div>
         </div>
+        {% comment %}
+          O intervalo de referência não é do analito, é da metodologia — cada
+          validação declara o do método de comparação e o do método em teste. O
+          que o cartão tem a dizer aqui é o uso: quantas validações se apoiam
+          neste analito.
+        {% endcomment %}
         <div class="pe">
-          {% if bloco.tem_intervalo %}
-            <span class="selo selo--neutro">
-              Referência {{ bloco.mensurando.referencia_inferior|floatformat:2 }} –
-              {{ bloco.mensurando.referencia_superior|floatformat:2 }}
-            </span>
-          {% else %}
-            {% comment %}
-              Sem intervalo de referência a concordância clínica não é calculada.
-              É melhor dizer isso aqui do que deixar a medida sumir do relatório.
-            {% endcomment %}
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--atencao-tinta)" stroke-width="2" stroke-linecap="round" style="flex-shrink: 0"><path d="M12 8v5M12 16.5v.01"/><circle cx="12" cy="12" r="9"/></svg>
-            <span style="font-size: 11.5px; color: var(--atencao-tinta)">
-              Sem intervalo de referência — a concordância clínica não é calculada
-            </span>
-          {% endif %}
+          <span class="selo selo--neutro">
+            {{ bloco.estudos }} validaç{{ bloco.estudos|pluralize:"ão,ões" }}
+          </span>
         </div>
       </a>
       {% empty %}
