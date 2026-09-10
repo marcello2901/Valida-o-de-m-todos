@@ -42,8 +42,10 @@
   .remover-nivel .nota { margin: 7px 0 8px; }
   .botao--perigo {
     border-color: var(--reprovado); color: var(--reprovado);
-    width: 100%; justify-content: center;
   }
+  /* Largura total só dentro da coluna, onde o botão é a ação da seção. No
+     rodapé ele divide a barra com o salvar e não pode esticar. */
+  .remover-nivel .botao--perigo { width: 100%; justify-content: center; }
   .botao--perigo:hover { background: var(--reprovado); color: var(--superficie); border-color: var(--reprovado); }
 
   .nova { flex: 0 0 236px; padding: 14px; }
@@ -57,7 +59,10 @@
 </style>
 {% endblock %}
 
-{% block scripts %}<script src="{% static 'js/colar.js' %}"></script>{% endblock %}
+{% block scripts %}
+<script src="{% static 'js/colar.js' %}"></script>
+<script src="{% static 'js/grade.js' %}"></script>
+{% endblock %}
 
 {% block corpo %}
 <div class="barra">
@@ -86,7 +91,19 @@
     tecle <strong>Ctrl+V</strong>. Uma coluna de rótulos (“Replicata 1”) é
     descartada, e colar três colunas preenche os três níveis de uma vez.
   </p>
-  <p class="aviso-colagem" data-aviso-colagem hidden></p>
+  {% comment %}
+    Seleção múltipla: a grade se comporta como a planilha de onde o laboratório
+    veio. Limpar esvazia os campos; quem apaga do estudo é o botão de salvar,
+    que é a regra de gravação que já existia.
+  {% endcomment %}
+  <p class="nota" style="margin: 0 0 12px">
+    Para corrigir vários de uma vez: <strong>arraste</strong> sobre as células,
+    <strong>Shift+clique</strong> para marcar um retângulo ou
+    <strong>Ctrl+clique</strong> (Cmd no Mac) para marcar avulsas. Depois
+    <strong>Delete</strong>, ou o botão que aparece no rodapé. Limpar não apaga
+    do estudo &mdash; quem apaga é o salvar.
+  </p>
+  <p class="aviso-colagem" data-recado-grade hidden></p>
 
   <form method="post">
     {% csrf_token %}
@@ -220,6 +237,7 @@
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7"/></svg>
         Salvar réplicas
       </button>
+      <button type="button" class="botao botao--perigo" data-limpar-selecao hidden></button>
       <span class="nota">
         Campo em branco apaga a réplica daquela posição. Réplicas excluídas com
         justificativa ficam travadas e não são alteradas aqui.

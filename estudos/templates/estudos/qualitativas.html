@@ -30,6 +30,11 @@
   .linha .valor { flex: 1; }
   .seta-par { color: var(--tinta-3); flex-shrink: 0; }
 
+  .botao--perigo {
+    border-color: var(--reprovado); color: var(--reprovado);
+  }
+  .botao--perigo:hover { background: var(--reprovado); color: var(--superficie); border-color: var(--reprovado); }
+
   .rodape-fixo {
     position: sticky; bottom: 0; margin-top: 16px; padding: 12px 0 4px;
     background: linear-gradient(to top, var(--plano) 72%, transparent);
@@ -38,7 +43,10 @@
 </style>
 {% endblock %}
 
-{% block scripts %}<script src="{% static 'js/colar.js' %}"></script>{% endblock %}
+{% block scripts %}
+<script src="{% static 'js/colar.js' %}"></script>
+<script src="{% static 'js/grade.js' %}"></script>
+{% endblock %}
 
 {% block corpo %}
 <div class="barra">
@@ -85,7 +93,19 @@
     <em>positivo</em>/<em>negativo</em>, <em>P</em>/<em>N</em> ou 1/0 &mdash; e maiúsculas
     não fazem diferença.
   </p>
-  <p class="aviso-colagem" data-aviso-colagem hidden></p>
+  {% comment %}
+    Seleção múltipla: a grade se comporta como a planilha de onde o laboratório
+    veio. Limpar esvazia os campos; quem apaga do estudo é o botão de salvar,
+    que é a regra de gravação que já existia.
+  {% endcomment %}
+  <p class="nota" style="margin: 0 0 12px">
+    Para corrigir vários de uma vez: <strong>arraste</strong> sobre as células,
+    <strong>Shift+clique</strong> para marcar um retângulo ou
+    <strong>Ctrl+clique</strong> (Cmd no Mac) para marcar avulsas. Depois
+    <strong>Delete</strong>, ou o botão que aparece no rodapé. Limpar não apaga
+    do estudo &mdash; quem apaga é o salvar.
+  </p>
+  <p class="aviso-colagem" data-recado-grade hidden></p>
 
   <datalist id="resultados-qualitativos">
     <option value="Reagente"></option>
@@ -135,6 +155,7 @@
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7"/></svg>
         Salvar amostras
       </button>
+      <button type="button" class="botao botao--perigo" data-limpar-selecao hidden></button>
       <button type="submit" name="acao" value="adicionar_linhas" class="botao">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
         Mais {{ passo }} linhas

@@ -2745,3 +2745,103 @@ class TestFaixasRecolhidasNaTelaDeResultado(TestCase):
         self.assertIn('id="analise"', corpo)
         self.assertIn('id="comparabilidade"', corpo)
         self.assertIn('href="#analise"', corpo)
+
+
+class TestSelecaoMultiplaNasGrades(TestCase):
+    """As três grades oferecem seleção múltipla para corrigir em bloco.
+
+    Corrigir um lançamento célula por célula é o trabalho que a grade existe
+    para evitar. O comportamento em si é do navegador; o que se pode travar
+    aqui é a fiação: o script carregado, o botão do rodapé, a dica na tela e os
+    atributos de coordenada de que a seleção depende.
+    """
+
+    def setUp(self):
+        self.laboratorio = montar_laboratorio("Lab A", "11.111.111/0001-11")
+        self.usuario = Usuario.objects.create_user(
+            username="analista", password="senha-longa-de-teste",
+            laboratorio=self.laboratorio, funcao=Usuario.ANALISTA,
+        )
+        self.estudo = montar_estudo(self.laboratorio, self.usuario)
+        self.client.force_login(self.usuario)
+
+    def _telas(self):
+        qualitativo = montar_estudo(
+            montar_laboratorio("Lab Q", "33.333.333/0001-33"), self.usuario
+        )
+        qualitativo.tipo = Estudo.QUALITATIVO
+        qualitativo.laboratorio = self.laboratorio
+        qualitativo.save()
+        return [
+            reverse("replicas_estudo", args=[self.estudo.pk]),
+            reverse("amostras_estudo", args=[self.estudo.pk]),
+            reverse("qualitativas_estudo", args=[qualitativo.pk]),
+        ]
+
+    def test_as_tres_grades_carregam_a_selecao(self):
+        for url in self._telas():
+            with self.subTest(url=url):
+                self.assertContains(self.client.get(url), "js/grade.js")
+
+    def test_as_tres_grades_tem_o_botao_de_limpar(self):
+        for url in self._telas():
+            with self.subTest(url=url):
+                self.assertContains(self.client.get(url), "data-limpar-selecao")
+
+    def test_as_tres_grades_explicam_os_gestos(self):
+        for url in self._telas():
+            with self.subTest(url=url):
+                corpo = self.client.get(url).content.decode()
+                self.assertIn("Shift+clique", corpo)
+                self.assertIn("Ctrl+clique", corpo)
+
+    def test_a_dica_diz_que_limpar_nao_apaga(self):
+        # É a diferença que evita alguém achar que perdeu dado sem salvar — e,
+        # pior, achar que apagou quando só limpou a tela.
+        corpo = " ".join(
+            self.client.get(
+                reverse("replicas_estudo", args=[self.estudo.pk])
+            ).content.decode().split()
+        )
+
+        self.assertIn("Limpar não apaga do estudo", corpo)
+        self.assertIn("quem apaga é o salvar", corpo)
+
+    def test_toda_celula_tem_as_coordenadas_da_selecao(self):
+        # O retângulo do Shift+clique é calculado por linha e coluna: sem os
+        # dois atributos em todas as células, a marcação sai furada.
+        corpo = self.client.get(
+            reverse("amostras_estudo", args=[self.estudo.pk])
+        ).content.decode()
+
+        import re
+
+        entradas = re.findall(r"<input[^>]*data-linha[^>]*>", corpo)
+        self.assertGreater(len(entradas), 30)
+        for entrada in entradas:
+            self.assertIn("data-coluna=", entrada)
+
+    def test_a_celula_travada_nao_recebe_coordenada(self):
+        # Réplica excluída é registro do que foi descartado: some do cálculo,
+        # não do banco, e a seleção não pode alcançá-la.
+        replica = self.estudo.niveis.get(numero=1).replicas.first()
+        replica.excluida = True
+        replica.justificativa_exclusao = "bolha na cubeta"
+        replica.save()
+
+        corpo = self.client.get(
+            reverse("replicas_estudo", args=[self.estudo.pk])
+        ).content.decode()
+
+        self.assertIn("disabled", corpo)
+        self.assertIn("excluída", corpo)
+
+    def test_o_recado_da_grade_e_um_so(self):
+        # Colagem e seleção falam pela mesma linha: uma grade, um lugar onde
+        # ela conversa com quem está digitando.
+        corpo = self.client.get(
+            reverse("replicas_estudo", args=[self.estudo.pk])
+        ).content.decode()
+
+        self.assertEqual(corpo.count("data-recado-grade"), 1)
+        self.assertNotIn("data-aviso-colagem", corpo)

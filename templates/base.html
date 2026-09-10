@@ -121,6 +121,14 @@
      não é problema, é etapa que falta. */
   .estado--PENDENTE { color: var(--tinta-3); }
 
+  /* Célula marcada nas grades de lançamento. Fundo e contorno, e não só uma
+     borda: numa grade de trinta campos iguais, uma borda de 1px passa
+     despercebida e o usuário limpa o bloco errado. */
+  input.selecionada {
+    background: var(--acento-fundo); border-color: var(--acento);
+    box-shadow: inset 0 0 0 1px var(--acento);
+  }
+
   /* --- Primitivas compartilhadas -----------------------------------------
      Estavam repetidas em cada tela, com valores levemente diferentes: o mesmo
      ".grade" tinha três larguras e ".coluna" queria dizer duas coisas. Uma

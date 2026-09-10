@@ -55,7 +55,9 @@
   function avisar(grade, texto) {
     // A faixa de aviso fica acima do formulário, fora do container da grade —
     // procurar só dentro dele achava nada, e a colagem acontecia em silêncio.
-    var caixa = document.querySelector("[data-aviso-colagem]");
+    // É a mesma linha usada pela seleção múltipla: uma grade, um lugar onde ela
+    // fala com quem está digitando.
+    var caixa = document.querySelector("[data-recado-grade]");
     if (!caixa) return;
     caixa.textContent = texto;
     caixa.hidden = false;
