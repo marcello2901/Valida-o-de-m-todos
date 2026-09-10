@@ -251,6 +251,18 @@ def replicas(request, estudo_id: int):
                 messages.error(request, erro)
             else:
                 messages.success(request, "Nível acrescentado à grade.")
+        elif request.POST.get("remover_nivel"):
+            # O identificador vem no próprio botão: o navegador envia só o
+            # botão clicado, então não é preciso JavaScript para saber qual
+            # coluna remover.
+            try:
+                recado = servicos.remover_nivel(
+                    estudo, request.user, request.POST["remover_nivel"]
+                )
+            except servicos.AcaoRecusada as recusa:
+                messages.error(request, str(recusa))
+            else:
+                messages.success(request, f"{recado} A remoção está na trilha de auditoria.")
         else:
             _salvar_medias_alvo(request, estudo)
             resumo = servicos.salvar_grade(estudo, request.POST)

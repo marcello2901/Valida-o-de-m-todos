@@ -3,7 +3,10 @@
 
 {% block titulo %}{{ estudo.mensurando.nome }} — {{ estudo.sistema_teste.equipamento }}{% endblock %}
 
-{% block scripts %}<script src="{% static 'js/selecao.js' %}"></script>{% endblock %}
+{% block scripts %}
+<script src="{% static 'js/faixas.js' %}"></script>
+<script src="{% static 'js/selecao.js' %}"></script>
+{% endblock %}
 
 {% block estilo %}
 <style>
@@ -11,9 +14,11 @@
   .pilha { flex-grow: 1; min-width: 0; display: flex; flex-direction: column; gap: 11px; }
   .lateral { width: 316px; flex-shrink: 0; display: flex; flex-direction: column; gap: 11px; position: sticky; top: 16px; }
 
-  /* Faixa condensável. Resolvida vira uma linha com a conclusão; a etapa
-     corrente fica aberta. Comportamento nativo do <details>: sem JavaScript,
-     funciona com teclado e sobrevive à impressão. */
+  /* Faixa condensável. Todas abrem recolhidas: a tela é o índice do estudo, e
+     quem chega nela quer ver o estado de tudo antes de entrar numa parte.
+     Comportamento nativo do <details> — funciona com teclado e sobrevive à
+     impressão; o faixas.js só cuida de abrir a seção certa quando um link
+     aponta para dentro dela. */
   .faixa { overflow: hidden; }
   .faixa > summary {
     display: flex; align-items: center; gap: 12px; padding: 13px 16px;
@@ -98,6 +103,11 @@
     border-radius: var(--raio-menor); background: var(--superficie);
   }
   .cabeca-recorte { display: flex; align-items: flex-start; gap: 12px; }
+  .opcional {
+    font-size: 9.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--tinta-3); background: var(--chip); border-radius: 4px;
+    padding: 1px 5px; margin-left: 6px;
+  }
 
   /* Caixa de decisão. Fica dentro do formulário da análise crítica porque o
      veredito é a conclusão dela, e sai no mesmo envio. */
@@ -355,7 +365,7 @@
     </details>
 
 {% if tipo == "qualitativo" %}
-    <details class="cartao faixa" open>
+    <details class="cartao faixa">
       <summary>
         <span class="marcador marcador--corrente">4</span>
         <span class="titulo-faixa">Desempenho qualitativo</span>
@@ -382,7 +392,7 @@
 
 {% else %}
     <!-- 4. Precisão e exatidão -->
-    <details class="cartao faixa" open>
+    <details class="cartao faixa">
       <summary>
         <span class="marcador {% if andamento.precisao_pct == 100 %}marcador--pronto{% else %}marcador--corrente{% endif %}">{% if andamento.precisao_pct == 100 %}&#10003;{% else %}4{% endif %}</span>
         <span class="titulo-faixa">Precisão e exatidão</span>
@@ -573,7 +583,7 @@
     </details>
 
     <!-- 5. Comparabilidade -->
-    <details class="cartao faixa" id="comparabilidade" {% if comparabilidade.tem_dados %}open{% endif %}>
+    <details class="cartao faixa" id="comparabilidade">
       <summary>
         <span class="marcador {% if andamento.comparacao_pct == 100 %}marcador--pronto{% elif comparabilidade.tem_dados %}marcador--corrente{% else %}marcador--espera{% endif %}">{% if andamento.comparacao_pct == 100 %}&#10003;{% else %}5{% endif %}</span>
         <span class="titulo-faixa">Comparabilidade</span>
@@ -778,9 +788,14 @@
                          placeholder="Ex.: faixa baixa — até 150 {{ estudo.mensurando.unidade_medida }}">
                 </div>
                 <div class="campo">
-                  <label for="motivo-recorte">Por que esta faixa</label>
+                  <label for="motivo-recorte">Por que esta faixa <span class="opcional">opcional</span></label>
                   <textarea name="justificativa" id="motivo-recorte" rows="3"
                             placeholder="Ex.: a amostra AM-037, a 512, domina a reta do estudo inteiro. Esta faixa cobre a concentração em que estão 95% dos pacientes."></textarea>
+                  <p class="nota" style="margin: 4px 0 0">
+                    Em branco o recorte é salvo do mesmo jeito. Escrito, é o que separa
+                    “examinei esta faixa porque…” de um subconjunto sem explicação no
+                    relatório.
+                  </p>
                 </div>
                 <button type="submit" class="botao botao--primario">
                   Salvar recorte no relatório
@@ -825,7 +840,9 @@
                 </form>
                 {% endif %}
               </div>
+              {% if salvo.registro.justificativa %}
               <p class="nota" style="margin: 8px 0 0">{{ salvo.registro.justificativa }}</p>
+              {% endif %}
               <div class="grafico">{{ salvo.grafico|safe }}</div>
             </div>
             {% endfor %}
@@ -882,7 +899,7 @@
       retrato e não mudam; a leitura que o responsável faz deles amadurece.
     {% endcomment %}
     {% if estudo.veredito %}
-    <details class="cartao faixa" open id="analise">
+    <details class="cartao faixa" id="analise">
       <summary>
         <span class="marcador {% if congelado.decidido %}marcador--pronto{% else %}marcador--corrente{% endif %}">
           {% if congelado.decidido %}&#10003;{% else %}!{% endif %}

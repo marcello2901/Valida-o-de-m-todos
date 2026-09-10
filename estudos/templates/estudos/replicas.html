@@ -28,6 +28,24 @@
   .corrida:first-child { margin-top: 2px; }
   .travada { font-size: 10.5px; color: var(--atencao-tinta); }
 
+  /* Remoção do nível: recolhida por padrão, e o botão só ganha a cor de
+     perigo depois de a pessoa abrir a seção e ler o que vai sumir. */
+  .remover-nivel { margin-top: 11px; }
+  .remover-nivel > summary {
+    cursor: pointer; font-size: 11px; color: var(--tinta-3);
+    list-style: none; display: inline-flex; align-items: center; gap: 5px;
+  }
+  .remover-nivel > summary::-webkit-details-marker { display: none; }
+  .remover-nivel > summary::before { content: "▸"; font-size: 9px; }
+  .remover-nivel[open] > summary::before { content: "▾"; }
+  .remover-nivel > summary:hover { color: var(--reprovado); }
+  .remover-nivel .nota { margin: 7px 0 8px; }
+  .botao--perigo {
+    border-color: var(--reprovado); color: var(--reprovado);
+    width: 100%; justify-content: center;
+  }
+  .botao--perigo:hover { background: var(--reprovado); color: var(--superficie); border-color: var(--reprovado); }
+
   .nova { flex: 0 0 236px; padding: 14px; }
   .nova h2 { font-size: 13px; font-weight: 600; margin: 0 0 4px; }
 
@@ -113,6 +131,33 @@
                    value="{{ coluna.nivel.provedor_interlaboratorial }}"
                    placeholder="ex.: Controllab EQ — ciclo 3/2026">
           </div>
+
+          {% comment %}
+            Remover o nível apaga as réplicas junto, e isso não se desfaz —
+            diferente de excluir uma réplica, que fica no banco com
+            justificativa e sai riscada no anexo do relatório. Por isso o botão
+            fica atrás de uma abertura, e o número de medições que somem é dito
+            antes da pergunta, não depois do clique.
+
+            O identificador do nível viaja no próprio botão: só o botão clicado
+            é enviado, então não é preciso JavaScript para saber qual coluna
+            remover.
+          {% endcomment %}
+          <details class="remover-nivel">
+            <summary>Remover este nível</summary>
+            <p class="nota">
+              {% if coluna.total_replicas %}
+                Apaga o nível e as <strong>{{ coluna.total_replicas }} réplica{{ coluna.total_replicas|pluralize }}</strong>
+                lançadas nele. Não há como desfazer.
+              {% else %}
+                Este nível ainda não tem réplica lançada.
+              {% endif %}
+            </p>
+            <button type="submit" name="remover_nivel" value="{{ coluna.nivel.pk }}"
+                    class="botao botao--perigo" formnovalidate>
+              Remover nível {{ coluna.nivel.numero }}
+            </button>
+          </details>
         </div>
 
         <div class="linhas">

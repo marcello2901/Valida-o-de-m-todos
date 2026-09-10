@@ -659,7 +659,9 @@
         examinado por {{ salvo.registro.criado_por.get_full_name|default:salvo.registro.criado_por.username|default:"—" }}
         em {{ salvo.registro.criado_em|date:"d/m/Y" }}
       </p>
+      {% if salvo.registro.justificativa %}
       <p class="motivo-recorte">{{ salvo.registro.justificativa }}</p>
+      {% endif %}
 
       {% if salvo.comparabilidade.tem_dados %}
       <table>

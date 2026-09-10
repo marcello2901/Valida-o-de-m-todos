@@ -855,10 +855,12 @@ def recortes_do_estudo(estudo, selecionavel: bool = False) -> list[dict]:
 def salvar_recorte(estudo, usuario, rotulo: str, minimo, maximo, justificativa: str):
     """Registra uma faixa examinada, para ela acompanhar o relatório.
 
-    Exige justificativa escrita. Um subconjunto escolhido à mão dentro de um
-    documento assinado, sem dizer por que aquela faixa, é o critério subjetivo
-    promovido a registro de qualidade — que é exatamente o problema que o
-    recorte veio resolver.
+    A justificativa é opcional. Ela continua sendo a coisa mais útil do
+    recorte — é o que separa "olhei esta faixa porque a amostra do topo domina
+    a reta" de um subconjunto sem explicação —, mas exigi-la travava o uso
+    corrente, em que o laboratório examina três ou quatro faixas antes de saber
+    qual delas vale a pena registrar. Quando está em branco, o relatório
+    simplesmente não imprime a caixa do motivo.
     """
     from .models import RecorteRegressao
 
@@ -872,11 +874,6 @@ def salvar_recorte(estudo, usuario, rotulo: str, minimo, maximo, justificativa: 
     justificativa = (justificativa or "").strip()
     if not rotulo:
         raise AcaoRecusada("Dê um nome ao recorte — é assim que ele aparece no relatório.")
-    if not justificativa:
-        raise AcaoRecusada(
-            "Escreva por que esta faixa foi examinada em separado. Sem isso, o "
-            "recorte não se sustenta no relatório."
-        )
 
     try:
         limite_inferior = converter_numero(str(minimo))
@@ -910,6 +907,7 @@ def salvar_recorte(estudo, usuario, rotulo: str, minimo, maximo, justificativa: 
                 "faixa": [str(limite_inferior), str(limite_superior)],
                 "amostras_na_faixa": dados["comparabilidade"]["n"],
                 "amostras_no_estudo": dados["n_total"],
+                "tem_justificativa": bool(justificativa),
             },
         )
     return recorte
@@ -1090,7 +1088,15 @@ def montar_grade(estudo) -> list[dict]:
                     "justificativa": replica.justificativa_exclusao if replica else "",
                 }
             )
-        colunas.append({"nivel": nivel, "linhas": linhas})
+        colunas.append(
+            {
+                "nivel": nivel,
+                "linhas": linhas,
+                # Quantas medições somem se este nível for removido. A tela diz
+                # o número antes de perguntar, não depois do clique.
+                "total_replicas": len(existentes),
+            }
+        )
     return colunas
 
 
@@ -1199,6 +1205,51 @@ def acrescentar_nivel(estudo, controle_id: str, media_alvo: str = "") -> str:
         media_interlaboratorial=alvo,
     )
     return ""
+
+
+def remover_nivel(estudo, usuario, nivel_id: str) -> str:
+    """Apaga uma coluna da grade e as réplicas que estavam nela.
+
+    Apagar medição é destrutivo e não se desfaz, então o registro do que sumiu
+    é o que resta: quantas réplicas foram junto, de qual lote, por quem. Um
+    nível que desaparece de um estudo sem deixar rastro é o mesmo problema da
+    réplica descartada que some do relatório.
+
+    Não é o mesmo gesto que excluir uma réplica: aquela continua no banco, com
+    justificativa, e aparece riscada no anexo. Esta some. É por isso que a tela
+    esconde o botão atrás de uma abertura e diz o número antes de perguntar.
+    """
+    if estudo.situacao == estudo.LIBERADO:
+        raise AcaoRecusada(
+            "Estudo liberado não aceita alteração de dado bruto. Cancele o estudo "
+            "e abra outro."
+        )
+
+    nivel = estudo.niveis.filter(pk=nivel_id).select_related("controle").first()
+    if nivel is None:
+        raise AcaoRecusada("Nível não encontrado neste estudo.")
+
+    replicas = nivel.replicas.count()
+    identificacao = f"Nível {nivel.numero} — {nivel.controle.nome}"
+
+    with transaction.atomic():
+        nivel.delete()
+        RegistroAuditoria.objects.create(
+            laboratorio=estudo.laboratorio,
+            usuario=usuario if usuario.is_authenticated else None,
+            acao="removeu um nível de controle",
+            objeto=estudo.identificacao,
+            detalhe={
+                "nivel": nivel.numero,
+                "controle": nivel.controle.nome,
+                "lote": nivel.controle.lote,
+                "replicas_apagadas": replicas,
+            },
+        )
+
+    if replicas:
+        return f"{identificacao} removido, junto de {replicas} réplica(s)."
+    return f"{identificacao} removido."
 
 
 # --- Grade de lançamento de amostras pareadas -------------------------------

@@ -181,11 +181,13 @@ class TestConteudoDoResultado(TestCase):
         # comparabilidade já mostram com o limite ao lado.
         self.assertNotContains(self.resposta, "Veredito por nível")
 
-    def test_as_faixas_resolvidas_nascem_fechadas(self):
-        # Só a etapa corrente abre sozinha: é isso que faz a tela caber num olhar.
+    def test_todas_as_faixas_nascem_fechadas(self):
+        # A tela é o índice do estudo: quem chega nela quer ver o estado de
+        # tudo antes de entrar numa parte. Antes a etapa corrente abria sozinha
+        # e empurrava o resto para fora da primeira tela.
         corpo = self.resposta.content.decode()
-        assert corpo.count("<details class=\"cartao faixa\">") >= 3, "faixas de rastreabilidade deveriam nascer condensadas"
-        assert "<details class=\"cartao faixa\" open>" in corpo, "a etapa corrente deveria nascer aberta"
+        assert corpo.count('<details class="cartao faixa"') >= 4, "as faixas deveriam existir"
+        assert '<details class="cartao faixa" open' not in corpo, "nenhuma faixa deveria nascer aberta"
 
     def test_traz_as_medidas_pedidas(self):
         for medida in [
@@ -2510,13 +2512,25 @@ class TestRecorteDaRegressao(TestCase):
         self.assertEqual(recorte.criado_por, self.usuario)
         self.assertIn("domina a reta", recorte.justificativa)
 
-    def test_recusa_recorte_sem_motivo_escrito(self):
-        # Subconjunto escolhido à mão dentro de documento assinado, sem dizer
-        # por quê, é o critério subjetivo promovido a registro de qualidade.
-        resposta = self._salvar(justificativa="")
+    def test_o_motivo_e_opcional(self):
+        # O motivo continua sendo a coisa mais útil do recorte, mas exigi-lo
+        # travava o uso corrente: o laboratório examina três ou quatro faixas
+        # antes de saber qual vale a pena registrar.
+        self._salvar(justificativa="")
 
-        self.assertEqual(self.estudo.recortes.count(), 0)
-        self.assertContains(resposta, "Escreva por que esta faixa")
+        self.assertEqual(self.estudo.recortes.count(), 1)
+        self.assertEqual(self.estudo.recortes.get().justificativa, "")
+
+    def test_recorte_sem_motivo_nao_imprime_caixa_vazia(self):
+        self._salvar(justificativa="")
+        self.client.post(reverse("concluir_estudo", args=[self.estudo.pk]))
+
+        corpo = self.client.get(
+            reverse("relatorio_estudo", args=[self.estudo.pk])
+        ).content.decode()
+
+        self.assertIn("Recorte &mdash; Faixa baixa", corpo)
+        self.assertNotIn('class="motivo-recorte"', corpo)
 
     def test_recusa_recorte_sem_nome(self):
         resposta = self._salvar(rotulo="")
@@ -2602,3 +2616,132 @@ class TestRecorteDaRegressao(TestCase):
 
         self.assertEqual(resposta.status_code, 200)
         self.assertIsNone(resposta.context.get("recorte_em_exame"))
+
+
+class TestRemoverNivelDeControle(TestCase):
+    """Apagar uma coluna da grade de réplicas.
+
+    É destrutivo e não se desfaz — diferente de excluir uma réplica, que fica
+    no banco com justificativa e sai riscada no anexo. Por isso o que sumiu
+    precisa ficar registrado, e a tela precisa dizer o número antes de
+    perguntar.
+    """
+
+    def setUp(self):
+        self.laboratorio = montar_laboratorio("Lab A", "11.111.111/0001-11")
+        self.usuario = Usuario.objects.create_user(
+            username="analista", password="senha-longa-de-teste",
+            laboratorio=self.laboratorio, funcao=Usuario.ANALISTA,
+        )
+        self.estudo = montar_estudo(self.laboratorio, self.usuario)
+        self.nivel = self.estudo.niveis.get(numero=1)
+        self.url = reverse("replicas_estudo", args=[self.estudo.pk])
+        self.client.force_login(self.usuario)
+
+    def test_remove_o_nivel_e_as_replicas_dele(self):
+        replicas = self.nivel.replicas.count()
+        self.assertGreater(replicas, 0)
+
+        self.client.post(self.url, {"remover_nivel": self.nivel.pk})
+
+        self.assertEqual(self.estudo.niveis.count(), 0)
+        self.assertEqual(Replica.objects.filter(nivel=self.nivel).count(), 0)
+
+    def test_a_remocao_diz_quantas_medicoes_sumiram(self):
+        replicas = self.nivel.replicas.count()
+
+        resposta = self.client.post(
+            self.url, {"remover_nivel": self.nivel.pk}, follow=True
+        )
+
+        self.assertContains(resposta, f"{replicas} réplica")
+
+    def test_a_remocao_vai_para_a_trilha_com_o_lote(self):
+        replicas = self.nivel.replicas.count()
+        lote = self.nivel.controle.lote
+
+        self.client.post(self.url, {"remover_nivel": self.nivel.pk})
+
+        registro = RegistroAuditoria.objects.get(acao="removeu um nível de controle")
+        self.assertEqual(registro.usuario, self.usuario)
+        self.assertEqual(registro.detalhe["replicas_apagadas"], replicas)
+        self.assertEqual(registro.detalhe["lote"], lote)
+
+    def test_estudo_liberado_nao_perde_nivel(self):
+        self.estudo.situacao = Estudo.LIBERADO
+        self.estudo.save()
+
+        self.client.post(self.url, {"remover_nivel": self.nivel.pk}, follow=True)
+
+        self.assertEqual(self.estudo.niveis.count(), 1)
+
+    def test_nivel_de_outro_estudo_e_recusado(self):
+        outro = montar_laboratorio("Lab B", "22.222.222/0001-22")
+        dono = Usuario.objects.create_user(
+            username="outro", password="senha-longa-de-teste", laboratorio=outro
+        )
+        alheio = montar_estudo(outro, dono).niveis.get(numero=1)
+
+        resposta = self.client.post(
+            self.url, {"remover_nivel": alheio.pk}, follow=True
+        )
+
+        self.assertTrue(NivelEstudo.objects.filter(pk=alheio.pk).exists())
+        self.assertContains(resposta, "Nível não encontrado")
+
+    def test_a_tela_avisa_quantas_replicas_somem_antes_do_clique(self):
+        resposta = self.client.get(self.url)
+
+        self.assertContains(resposta, "Remover este nível")
+        self.assertContains(resposta, "Não há como desfazer")
+        self.assertContains(resposta, f'value="{self.nivel.pk}"')
+
+    def test_salvar_a_grade_nao_remove_nada(self):
+        # O botão de remover fica no mesmo formulário da grade: um envio comum
+        # não pode apagar coluna nenhuma.
+        self.client.post(self.url, {})
+
+        self.assertEqual(self.estudo.niveis.count(), 1)
+
+
+class TestFaixasRecolhidasNaTelaDeResultado(TestCase):
+    """A tela abre como índice do estudo, com tudo recolhido.
+
+    O preço de recolher é que um link para dentro de uma seção fechada não leva
+    a lugar nenhum. Os dois links que o programa gera para dentro — o do
+    veredito e o do retorno de um recorte — precisam continuar funcionando.
+    """
+
+    def setUp(self):
+        self.laboratorio = montar_laboratorio("Lab A", "11.111.111/0001-11")
+        self.usuario = Usuario.objects.create_user(
+            username="rt", password="senha-longa-de-teste",
+            laboratorio=self.laboratorio, funcao=Usuario.RESPONSAVEL,
+        )
+        self.estudo = montar_estudo(self.laboratorio, self.usuario)
+        self.client.force_login(self.usuario)
+        self.url = reverse("resultado_estudo", args=[self.estudo.pk])
+
+    def test_nenhuma_faixa_abre_sozinha(self):
+        self.client.post(reverse("concluir_estudo", args=[self.estudo.pk]))
+
+        corpo = self.client.get(self.url).content.decode()
+
+        self.assertIn('class="cartao faixa"', corpo)
+        self.assertNotIn('class="cartao faixa" open', corpo)
+
+    def test_o_programa_carrega_o_que_abre_a_secao_apontada(self):
+        corpo = self.client.get(self.url).content.decode()
+
+        self.assertIn("js/faixas.js", corpo)
+
+    def test_as_ancoras_que_o_programa_gera_existem_na_pagina(self):
+        # Sem o id na página, o link do veredito e o retorno do recorte
+        # apontariam para o nada.
+        self.client.post(reverse("concluir_estudo", args=[self.estudo.pk]))
+
+        corpo = self.client.get(self.url).content.decode()
+
+        self.assertIn('id="analise"', corpo)
+        self.assertIn('id="comparabilidade"', corpo)
+        self.assertIn('href="#analise"', corpo)

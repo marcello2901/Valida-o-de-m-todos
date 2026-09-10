@@ -143,14 +143,8 @@
   function iniciar() {
     var graficos = document.querySelectorAll('svg[data-selecionavel="regressao"]');
     Array.prototype.forEach.call(graficos, preparar);
-
-    // Recalcular a faixa recarrega a página, e o formulário GET não leva
-    // âncora: sem isto o usuário arrastava no gráfico e era devolvido ao topo
-    // da tela, tendo de rolar de volta para ver o que pediu.
-    if (window.location.search.indexOf("faixa_min=") !== -1) {
-      var painel = document.querySelector("[data-selecao]");
-      if (painel) painel.scrollIntoView({ block: "center" });
-    }
+    // Abrir a faixa certa e rolar até ela é assunto do faixas.js, que é quem
+    // sabe quais seções estão recolhidas.
   }
 
   if (document.readyState === "loading") {
