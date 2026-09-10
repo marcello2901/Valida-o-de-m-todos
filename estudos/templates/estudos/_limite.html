@@ -1,0 +1,27 @@
+{% load numeros %}{% comment %}
+  Um limite de aceitação, mostrado na escala em que foi escrito.
+
+  A ficha do analito permite dizer "6%, mas abaixo de 0,50 mU/L use ± 0,06
+  mU/L" — porque 6% de um controle de 0,30 é uma janela menor que a resolução
+  do ensaio. Quando essa regra vale, mostrar só o percentual convertido imprime
+  "± 20,00%" ao lado de uma ficha que diz 6%, e nem quem escreveu a ficha
+  reconhece o próprio critério. Aqui o número principal é o que está escrito na
+  especificação, e a conversão vem embaixo, nomeada.
+{% endcomment %}
+{% if not indicador %}
+  <span style="color: var(--atencao-tinta)">sem limite</span>
+{% elif indicador.tipo_limite == "absoluto" and indicador.limite_absoluto is not None %}
+  &plusmn; {{ indicador.limite_absoluto|com_menos:4 }} {{ unidade }}
+  <div class="nota">
+    regra absoluta &middot; {{ indicador.limite_pct|floatformat:2 }}% nesta concentração
+    {% if indicador.referencia %}<br>{{ indicador.referencia }}{% endif %}
+  </div>
+{% elif indicador.limite_pct is not None %}
+  &plusmn; {{ indicador.limite_pct|floatformat:2 }}%
+  <div class="nota">
+    {{ rotulo|default:"limite da ficha" }}
+    {% if indicador.limite_absoluto %}&middot; {{ indicador.limite_absoluto|com_menos:4 }} {{ unidade }}{% endif %}
+  </div>
+{% else %}
+  <span style="color: var(--atencao-tinta)">sem limite</span>
+{% endif %}

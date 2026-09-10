@@ -277,7 +277,9 @@
           {{ item.estatistica.desvio_padrao|com_menos:4 }} &divide; {{ item.estatistica.media|com_menos:4 }}
           <div class="nota">desvio padrão &divide; média global</div>
         </td>
-        <td class="n">&plusmn; {{ item.indicador_imprecisao.limite_pct|floatformat:2|default:"—" }}%</td>
+        <td class="n">
+          {% include "estudos/_limite.html" with indicador=item.indicador_imprecisao unidade=estudo.mensurando.unidade_medida %}
+        </td>
         <td>{{ item.indicador_imprecisao.status }}</td>
       </tr>
       {% endif %}
@@ -315,12 +317,7 @@
           </div>
         </td>
         <td class="n">
-          {% if item.indicador_bias.limite_pct %}
-            &plusmn; {{ item.indicador_bias.limite_pct|floatformat:2 }}%
-            <div class="nota">bias máximo</div>
-          {% else %}
-            sem limite definido
-          {% endif %}
+          {% include "estudos/_limite.html" with indicador=item.indicador_bias unidade=estudo.mensurando.unidade_medida rotulo="bias máximo" %}
         </td>
         <td>{{ item.indicador_bias.status|default:"INDETERMINADO" }}</td>
       </tr>

@@ -2064,3 +2064,138 @@ class TestIntervaloDeReferenciaSoNaValidacao(TestCase):
 
         self.assertContains(resposta, "1 validação")
         self.assertNotContains(resposta, "Sem intervalo de referência")
+
+
+class TestLimiteAbsolutoNaTela(TestCase):
+    """A tela mostra o limite na escala em que ele foi escrito.
+
+    Ficha de TSH com "6%, mas abaixo de 0,50 mU/L use ± 0,06 mU/L". No nível 1,
+    de concentração 0,30, a tela imprimia "± 20,00% · bias máximo" — que é o
+    limite absoluto convertido, sem dizer que era. Quem escreveu 6% na ficha lia
+    20% na tela e concluía que o programa estava errado.
+    """
+
+    def setUp(self):
+        self.laboratorio = montar_laboratorio("Lab A", "11.111.111/0001-11")
+        self.usuario = Usuario.objects.create_user(
+            username="analista", password="senha-longa-de-teste",
+            laboratorio=self.laboratorio, funcao=Usuario.RESPONSAVEL,
+        )
+        self.estudo = montar_estudo(self.laboratorio, self.usuario)
+
+        ficha = self.estudo.especificacao
+        ficha.bias_derivado = False
+        ficha.bias_maximo_pct = Decimal("6.00")
+        ficha.bias_referencia = "50% do erro total do provedor"
+        ficha.bias_limiar_absoluto = Decimal("2.0000")
+        ficha.bias_maximo_absoluto = Decimal("0.0600")
+        ficha.bias_referencia_absoluto = "para resultados ≤ 2,00, ± 0,06"
+        ficha.save()
+
+        # Alvo do grupo de pares abaixo do limiar: vale a regra absoluta.
+        self.nivel = self.estudo.niveis.get(numero=1)
+        self.nivel.media_interlaboratorial = Decimal("1.2000")
+        self.nivel.save()
+        self.client.force_login(self.usuario)
+        self.url = reverse("resultado_estudo", args=[self.estudo.pk])
+
+    def test_o_limite_aparece_na_unidade_de_medida(self):
+        resposta = self.client.get(self.url)
+
+        self.assertContains(resposta, "0,0600 ng/dL")
+        self.assertContains(resposta, "regra absoluta")
+
+    def test_a_conversao_aparece_nomeada_e_nao_sozinha(self):
+        # 0,06 / 1,20 = 5,00%. O número pode aparecer, desde que dito o que é.
+        resposta = self.client.get(self.url)
+
+        self.assertContains(resposta, "nesta concentração")
+        self.assertContains(resposta, "para resultados ≤ 2,00")
+
+    def test_a_regra_percentual_continua_em_porcentagem(self):
+        self.nivel.media_interlaboratorial = Decimal("5.0000")
+        self.nivel.save()
+
+        resposta = self.client.get(self.url)
+
+        self.assertContains(resposta, "&plusmn; 6,00%")
+        self.assertNotContains(resposta, "regra absoluta")
+
+    def test_o_relatorio_mostra_a_mesma_coisa(self):
+        self.client.post(reverse("concluir_estudo", args=[self.estudo.pk]))
+
+        resposta = self.client.get(reverse("relatorio_estudo", args=[self.estudo.pk]))
+
+        self.assertContains(resposta, "0,0600 ng/dL")
+        self.assertContains(resposta, "regra absoluta")
+
+
+class TestConcentracaoQueResolveOLimite(TestCase):
+    """O limite de aceitação não pode depender do resultado que ele julga.
+
+    A regra do limite absoluto existe porque a concentração do MATERIAL é
+    baixa. Com a média medida decidindo, o critério se mexia conforme a leitura:
+    um controle de alvo 0,50 medido a 0,48 caía na regra absoluta e ganhava
+    folga; medido a 0,51 caía na percentual. Um limite que depende do que se
+    mediu não é critério de aceitação.
+    """
+
+    def setUp(self):
+        self.laboratorio = montar_laboratorio("Lab A", "11.111.111/0001-11")
+        self.usuario = Usuario.objects.create_user(
+            username="analista", password="senha-longa-de-teste",
+            laboratorio=self.laboratorio, funcao=Usuario.ANALISTA,
+        )
+        self.estudo = montar_estudo(self.laboratorio, self.usuario)
+        self.nivel = self.estudo.niveis.get(numero=1)
+
+    def test_usa_a_media_do_grupo_de_pares_quando_informada(self):
+        self.nivel.media_interlaboratorial = Decimal("1.2000")
+        self.nivel.save()
+
+        item = servicos.calcular(self.estudo)["precisao"][0]
+
+        self.assertAlmostEqual(item["concentracao"], 1.2, places=4)
+        self.assertEqual(item["origem_da_concentracao"], "média interlaboratorial")
+
+    def test_sem_alvo_do_grupo_volta_para_a_media_medida_e_diz_isso(self):
+        item = servicos.calcular(self.estudo)["precisao"][0]
+
+        self.assertAlmostEqual(item["concentracao"], item["estatistica"]["media"], places=4)
+        self.assertEqual(item["origem_da_concentracao"], "média das réplicas")
+
+    def test_a_leitura_do_metodo_nao_muda_mais_o_limite(self):
+        # Mesmo material, mesma ficha: um método que lê alto e outro que lê
+        # baixo têm de ser julgados pelo mesmo critério.
+        ficha = self.estudo.especificacao
+        ficha.bias_derivado = False
+        ficha.bias_maximo_pct = Decimal("6.00")
+        ficha.bias_limiar_absoluto = Decimal("1.5000")
+        ficha.bias_maximo_absoluto = Decimal("0.0600")
+        ficha.bias_referencia_absoluto = "abaixo de 1,50, ± 0,06"
+        ficha.save()
+
+        self.nivel.media_interlaboratorial = Decimal("1.4000")
+        self.nivel.save()
+        antes = servicos.calcular(self.estudo)["precisao"][0]["indicador_bias"]
+
+        # As réplicas sobem 40%, atravessando o limiar. O limite não se mexe.
+        for replica in Replica.objects.filter(nivel=self.nivel):
+            replica.valor = replica.valor * Decimal("1.4")
+            replica.save(update_fields=["valor"])
+
+        depois = servicos.calcular(self.estudo)["precisao"][0]["indicador_bias"]
+
+        self.assertEqual(antes["tipo_limite"], depois["tipo_limite"])
+        self.assertEqual(antes["limite_absoluto"], depois["limite_absoluto"])
+        self.assertEqual(antes["limite_pct"], depois["limite_pct"])
+
+    def test_a_tela_diz_qual_concentracao_resolveu_o_limite(self):
+        self.nivel.media_interlaboratorial = Decimal("1.2000")
+        self.nivel.save()
+        self.client.force_login(self.usuario)
+
+        resposta = self.client.get(reverse("resultado_estudo", args=[self.estudo.pk]))
+
+        self.assertContains(resposta, "Limites resolvidos em")
+        self.assertContains(resposta, "média interlaboratorial")

@@ -125,17 +125,32 @@ def calcular_precisao(estudo) -> list[dict]:
             agrupadas, estudo.desenho_precisao, nivel.alvo_do_bias()
         )
 
-        # Concentração usada para resolver limite percentual contra absoluto.
-        # É a média medida: era o que o programa já usava quase sempre, porque a
-        # concentração declarada quase nunca era preenchida — e quando era, punha
-        # o número da bula a decidir um limite sobre medições que são outras.
-        concentracao = estatistica["media"]
+        # Concentração que decide entre o limite percentual e o absoluto.
+        #
+        # É a média do grupo de pares quando informada, e não a média medida
+        # aqui. A regra do limite absoluto existe porque a concentração do
+        # material é baixa — e "baixa" tem de ser uma propriedade do material,
+        # não da leitura que está sendo julgada. Com a média medida no lugar, o
+        # critério de aceitação se mexe conforme o resultado: um controle de
+        # alvo 0,50 medido a 0,48 cai na regra absoluta e ganha 12,5% de folga;
+        # medido a 0,51 cai na percentual e passa a valer 6%. Um limite que
+        # depende do que se mediu não é critério de aceitação.
+        #
+        # Sem média interlaboratorial não há alternativa melhor à mão, e aí a
+        # média medida volta a valer — dito na tela, para ninguém supor outra
+        # coisa.
+        alvo = nivel.alvo_do_bias()
+        concentracao = alvo if alvo is not None else estatistica["media"]
+        origem_da_concentracao = (
+            "média interlaboratorial" if alvo is not None else "média das réplicas"
+        )
 
         resultados.append(
             {
                 "nivel": nivel,
                 "numero": nivel.numero,
                 "concentracao": concentracao,
+                "origem_da_concentracao": origem_da_concentracao,
                 "estatistica": estatistica,
                 "origem_do_alvo": nivel.origem_do_alvo(),
                 "valores_em_ordem": [valor for corrida in agrupadas for valor in corrida],

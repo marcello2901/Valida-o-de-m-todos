@@ -100,6 +100,11 @@ def avaliar_imprecisao(
         "indicador": "imprecisão",
         "observado_pct": cv_pct,
         "limite_pct": resolvido["limite_pct"],
+        # Quando a regra absoluta vale, o percentual acima é o limite absoluto
+        # convertido nesta concentração — e sozinho ele engana: "± 0,06 mU/L"
+        # vira "± 20%" num controle de 0,30, e quem escreveu a ficha não
+        # reconhece o próprio critério. Os dois viajam juntos daqui para frente.
+        "limite_absoluto": resolvido["limite_absoluto"],
         "tipo_limite": resolvido["tipo"],
         "referencia": resolvido["referencia"],
         "status": comparacao["status"],
@@ -120,6 +125,11 @@ def avaliar_bias(
         "indicador": "bias",
         "observado_pct": bias_pct,
         "limite_pct": resolvido["limite_pct"],
+        # Quando a regra absoluta vale, o percentual acima é o limite absoluto
+        # convertido nesta concentração — e sozinho ele engana: "± 0,06 mU/L"
+        # vira "± 20%" num controle de 0,30, e quem escreveu a ficha não
+        # reconhece o próprio critério. Os dois viajam juntos daqui para frente.
+        "limite_absoluto": resolvido["limite_absoluto"],
         "tipo_limite": resolvido["tipo"],
         "referencia": resolvido["referencia"],
         "status": comparacao["status"],
@@ -155,6 +165,11 @@ def avaliar_erro_total(
         "indicador": "erro total",
         "observado_pct": te,
         "limite_pct": resolvido["limite_pct"],
+        # Quando a regra absoluta vale, o percentual acima é o limite absoluto
+        # convertido nesta concentração — e sozinho ele engana: "± 0,06 mU/L"
+        # vira "± 20%" num controle de 0,30, e quem escreveu a ficha não
+        # reconhece o próprio critério. Os dois viajam juntos daqui para frente.
+        "limite_absoluto": resolvido["limite_absoluto"],
         "tipo_limite": resolvido["tipo"],
         "referencia": resolvido["referencia"],
         "status": comparacao["status"],

@@ -376,3 +376,44 @@ def _indicador(resultado: dict, nivel: int, nome: str) -> dict:
                 if indicador["indicador"] == nome:
                     return indicador
     raise AssertionError(f"indicador '{nome}' não encontrado no nível {nivel}")
+
+
+class TestLimiteAbsolutoViajaComOPercentual:
+    """Quando a regra absoluta vale, o percentual sozinho engana.
+
+    "± 0,06 mU/L" num controle de 0,30 vira "± 20%". Quem escreveu a ficha com
+    6% não reconhece o próprio critério e conclui que o programa está errado.
+    Por isso o limite absoluto e o tipo de regra saem do motor junto do
+    percentual, para a tela poder mostrar a escala em que o limite foi escrito.
+    """
+
+    def _limite(self):
+        return espec.LimiteQualidade(
+            valor_pct=6.0,
+            referencia_pct="50% do erro total do provedor",
+            limiar_absoluto=0.50,
+            valor_absoluto=0.06,
+            referencia_absoluto="para TSH ≤ 0,50 mU/L, ± 0,06 mU/L",
+        )
+
+    def test_abaixo_do_limiar_devolve_a_regra_absoluta_inteira(self):
+        resultado = ver.avaliar_bias(7.14, self._limite(), 0.30)
+
+        assert resultado["tipo_limite"] == espec.ABSOLUTO
+        assert resultado["limite_absoluto"] == 0.06
+        assert resultado["limite_pct"] == pytest.approx(20.0)
+        assert resultado["referencia"] == "para TSH ≤ 0,50 mU/L, ± 0,06 mU/L"
+
+    def test_acima_do_limiar_devolve_a_regra_percentual_inteira(self):
+        resultado = ver.avaliar_bias(21.75, self._limite(), 2.92)
+
+        assert resultado["tipo_limite"] == espec.PERCENTUAL
+        assert resultado["limite_pct"] == 6.0
+        assert resultado["limite_absoluto"] == pytest.approx(0.1752)
+        assert resultado["status"] == ver.REPROVADO
+
+    def test_a_imprecisao_e_o_erro_total_tambem_carregam_o_absoluto(self):
+        limite = self._limite()
+
+        assert ver.avaliar_imprecisao(3.0, limite, 0.30)["limite_absoluto"] == 0.06
+        assert ver.avaliar_erro_total(1.0, 1.0, limite, 0.30)["limite_absoluto"] == 0.06

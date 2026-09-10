@@ -393,6 +393,13 @@
               &middot; média interlaboratorial {{ item.nivel.media_interlaboratorial|floatformat:"-4" }}
               {% if item.origem_do_alvo %}({{ item.origem_do_alvo }}){% endif %}
             {% endif %}
+            {% comment %}
+              Qual concentração decidiu entre o limite percentual e o absoluto.
+              Ela precisa estar à vista: é o que explica por que o nível 1 de um
+              TSH mostra um limite em mU/L e o nível 2 mostra em porcentagem.
+            {% endcomment %}
+            <br>Limites resolvidos em {{ item.concentracao|floatformat:"-4" }}
+            ({{ item.origem_da_concentracao }})
           </p>
 
           {% comment %}Estatística de cada corrida: é a leitura do dia.{% endcomment %}
@@ -435,7 +442,9 @@
                   <span class="lado">{{ item.estatistica.media|floatformat:4|default:"—" }}<span class="ante">média global</span></span>
                 </span>
               </td>
-              <td class="n">&plusmn; {{ item.indicador_imprecisao.limite_pct|floatformat:2|default:"—" }}%</td>
+              <td class="n">
+                {% include "estudos/_limite.html" with indicador=item.indicador_imprecisao unidade=estudo.mensurando.unidade_medida %}
+              </td>
               <td><span class="estado estado--{{ item.indicador_imprecisao.status }}" style="border: none; padding: 0">{{ item.indicador_imprecisao.status }}</span></td>
             </tr>
             {% endif %}
@@ -485,12 +494,7 @@
                 </span>
               </td>
               <td class="n">
-                {% if item.indicador_bias.limite_pct %}
-                  &plusmn; {{ item.indicador_bias.limite_pct|floatformat:2 }}%
-                  <div class="nota">bias máximo</div>
-                {% else %}
-                  <span style="color: var(--atencao-tinta)">sem limite</span>
-                {% endif %}
+                {% include "estudos/_limite.html" with indicador=item.indicador_bias unidade=estudo.mensurando.unidade_medida rotulo="bias máximo" %}
               </td>
               <td>
                 {% if item.indicador_bias %}
