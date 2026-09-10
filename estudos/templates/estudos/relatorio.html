@@ -194,6 +194,60 @@
     font-size: 10px; color: var(--tinta-3); line-height: 1.6; text-align: justify;
   }
 
+  /* --- Anexo de dados brutos -------------------------------------------------
+   *
+   * Começa em página nova e não compete com o corpo do documento: tipografia
+   * menor, uma coluna de números por corrida, duas colunas de amostras. O que
+   * foi descartado fica riscado e nomeado — some do cálculo, não do papel.
+   */
+  .anexo { margin-top: 44px; padding-top: 22px; border-top: 1px solid var(--linha); }
+  .anexo > h2 {
+    font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .09em;
+    color: var(--tinta-2); margin: 0 0 6px; break-after: avoid;
+  }
+  .anexo-grupo { margin-top: 26px; break-inside: avoid; }
+  .anexo-grupo:first-of-type { margin-top: 20px; }
+  .anexo h3 { font-size: 12.5px; font-weight: 600; margin: 0 0 2px; break-after: avoid; }
+
+  .corridas { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
+  .corrida {
+    flex: 1 1 96px; min-width: 88px; padding: 9px 10px 10px;
+    background: var(--faixa); border-radius: 7px; break-inside: avoid;
+  }
+  .corrida-titulo {
+    font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em;
+    color: var(--tinta-3); margin-bottom: 6px;
+  }
+  .replicas { margin: 0; padding: 0; list-style: none; counter-reset: replica; }
+  .replicas li {
+    font-size: 11.5px; font-variant-numeric: tabular-nums; padding: 1.5px 0;
+    display: flex; gap: 7px;
+  }
+  .replicas li::before {
+    counter-increment: replica; content: counter(replica);
+    font-size: 9px; color: var(--tinta-3); min-width: 11px; text-align: right;
+    font-variant-numeric: tabular-nums; padding-top: 2px;
+  }
+  .descartada { color: var(--tinta-3); text-decoration: line-through; }
+  .descartada .nota { text-decoration: none; }
+  .nota.descarte { margin: 7px 0 0; }
+
+  .pareadas { display: flex; gap: 24px; align-items: flex-start; margin-top: 10px; }
+  .pareadas table { flex: 1 1 0; font-size: 11.5px; }
+  .pareadas td, .pareadas th { padding: 5px 8px; }
+
+  /* Recorte por faixa: um bloco fechado, sempre depois do gráfico completo. */
+  .recorte {
+    margin-top: 24px; padding-top: 16px; border-top: 1px dashed var(--linha);
+    break-inside: avoid;
+  }
+  .recorte h3 { font-size: 12.5px; font-weight: 600; margin: 0 0 2px; }
+  .motivo-recorte {
+    margin: 9px 0 12px; padding: 11px 13px; background: var(--faixa);
+    border-left: 2px solid var(--linha); border-radius: 0 6px 6px 0;
+    font-size: 12px; line-height: 1.6; white-space: pre-wrap;
+  }
+
   .grafico { margin: 16px 0 4px; break-inside: avoid; }
   .grafico svg { max-width: 100%; height: auto; }
 
@@ -229,6 +283,9 @@
     h1, h2, h3 { break-after: avoid; page-break-after: avoid; }
     p, li { orphans: 3; widows: 3; }
     tr, .nivel-bloco, .veredito-final, .assinatura { break-inside: avoid; }
+
+    /* O anexo é prova anexada ao documento assinado: começa em folha própria. */
+    .anexo { break-before: page; margin-top: 0; padding-top: 0; border-top: none; }
 
     /* O filete de seção some junto do espaço quando a seção abre uma página —
      * o topo da folha já é separação suficiente. */
@@ -585,6 +642,70 @@
       </tr>
     </table>
     {% if graficos.regressao %}<div class="grafico">{{ graficos.regressao|safe }}</div>{% endif %}
+
+    {% comment %}
+      Recortes por faixa de concentração. Vêm SEMPRE depois do gráfico
+      completo e nunca no lugar dele: um relatório que mostrasse apenas a faixa
+      escolhida a dedo seria o critério subjetivo promovido a documento
+      assinado. Cada um traz quem o examinou, quantas amostras entraram e o
+      motivo escrito.
+    {% endcomment %}
+    {% for salvo in recortes %}
+    <div class="recorte break-avoid">
+      <h3>Recorte &mdash; {{ salvo.registro.rotulo }}</h3>
+      <p class="nota">
+        Faixa de {{ salvo.registro.faixa_escrita }} {{ estudo.mensurando.unidade_medida }} &middot;
+        {{ salvo.comparabilidade.n }} de {{ salvo.n_total }} amostras &middot;
+        examinado por {{ salvo.registro.criado_por.get_full_name|default:salvo.registro.criado_por.username|default:"—" }}
+        em {{ salvo.registro.criado_em|date:"d/m/Y" }}
+      </p>
+      <p class="motivo-recorte">{{ salvo.registro.justificativa }}</p>
+
+      {% if salvo.comparabilidade.tem_dados %}
+      <table>
+        <colgroup><col style="width: 34%"><col style="width: 33%"><col style="width: 33%"></colgroup>
+        <thead>
+        <tr><th>Medida</th><th class="n">Nesta faixa</th><th class="n">Estudo inteiro</th></tr>
+        </thead>
+        <tr>
+          <td>Amostras</td>
+          <td class="n">{{ salvo.comparabilidade.n }}</td>
+          <td class="n">{{ salvo.n_total }}</td>
+        </tr>
+        <tr>
+          <td>Regressão de Deming</td>
+          <td class="n">y = {{ salvo.comparabilidade.deming.inclinacao|floatformat:4 }}x {% if salvo.comparabilidade.deming.intercepto >= 0 %}+{% else %}&minus;{% endif %} {{ salvo.comparabilidade.deming.intercepto|floatformat:4 }}</td>
+          <td class="n">y = {{ comparabilidade.deming.inclinacao|floatformat:4 }}x {% if comparabilidade.deming.intercepto >= 0 %}+{% else %}&minus;{% endif %} {{ comparabilidade.deming.intercepto|floatformat:4 }}</td>
+        </tr>
+        <tr>
+          <td>Correlação de Pearson</td>
+          <td class="n">r = {{ salvo.comparabilidade.regressao.r|floatformat:4|default:"—" }}</td>
+          <td class="n">r = {{ comparabilidade.regressao.r|floatformat:4|default:"—" }}</td>
+        </tr>
+        <tr>
+          <td>Razão das médias</td>
+          <td class="n">{{ salvo.comparabilidade.razao_das_medias.desvio_pct|sinalizado:2 }}%</td>
+          <td class="n">{{ comparabilidade.razao_das_medias.desvio_pct|sinalizado:2 }}%</td>
+        </tr>
+        <tr>
+          <td>Concordância analítica</td>
+          <td class="n">{{ salvo.comparabilidade.analitica.concordancia_pct|floatformat:1|default:"—" }}%</td>
+          <td class="n">{{ comparabilidade.analitica.concordancia_pct|floatformat:1|default:"—" }}%</td>
+        </tr>
+      </table>
+      {% if salvo.poucas_amostras %}
+      <p class="nota" style="margin-top: 7px">
+        Faixa com {{ salvo.comparabilidade.n }} amostra(s): abaixo de
+        {{ salvo.minimo_recomendado }} a inclinação muda de figura com um ponto a mais.
+        Indício, não conclusão.
+      </p>
+      {% endif %}
+      {% endif %}
+
+      <div class="grafico">{{ salvo.grafico|safe }}</div>
+    </div>
+    {% endfor %}
+
     {% if graficos.bland_altman %}<div class="grafico">{{ graficos.bland_altman|safe }}</div>{% endif %}
   </div>
   {% endwith %}
@@ -743,6 +864,91 @@
       </div>
     </div>
   </div>
+
+  {% comment %}
+    Anexo de dados brutos. Vem depois da assinatura, não antes: o documento
+    assinado termina no veredito, e o anexo é a prova que o acompanha. Começa
+    em página nova, e traz também o que foi descartado — uma medição excluída
+    que some do documento é indistinguível de uma que nunca existiu.
+  {% endcomment %}
+  {% if brutos.tem_dados %}
+  <div class="anexo">
+    <h2>Anexo &mdash; dados brutos</h2>
+    <p class="nota" style="margin: 0 0 20px">
+      As medições como foram registradas no sistema. Réplicas e amostras descartadas
+      aparecem marcadas, com a justificativa registrada no momento da exclusão; elas
+      não entram em nenhum cálculo deste relatório.
+    </p>
+
+    {% for grupo in brutos.niveis %}
+    <div class="anexo-grupo">
+      <h3>
+        Réplicas &mdash; nível {{ grupo.nivel.numero }} &middot; {{ grupo.nivel.controle.nome }}
+        (lote {{ grupo.nivel.controle.lote }})
+      </h3>
+      <p class="nota">
+        {{ grupo.total }} medi{{ grupo.total|pluralize:"ção,ções" }} em
+        {{ grupo.corridas|length }} corrida{{ grupo.corridas|length|pluralize }}
+        {% if grupo.descartadas %}&middot; {{ grupo.descartadas }} descartada{{ grupo.descartadas|pluralize }}{% endif %}
+        &middot; valores em {{ estudo.mensurando.unidade_medida }}
+      </p>
+      <div class="corridas">
+        {% for corrida in grupo.corridas %}
+        <div class="corrida">
+          <div class="corrida-titulo">Corrida {{ corrida.numero }}</div>
+          <ol class="replicas">
+            {% for replica in corrida.replicas %}
+            <li{% if replica.excluida %} class="descartada" title="{{ replica.justificativa_exclusao }}"{% endif %}>
+              {{ replica.valor|com_menos:4 }}
+            </li>
+            {% endfor %}
+          </ol>
+        </div>
+        {% endfor %}
+      </div>
+      {% for corrida in grupo.corridas %}{% for replica in corrida.replicas %}{% if replica.excluida %}
+      <p class="nota descarte">
+        Corrida {{ corrida.numero }}, réplica {{ replica.sequencia }} ({{ replica.valor|com_menos:4 }})
+        descartada &mdash; {{ replica.justificativa_exclusao|default:"sem justificativa registrada" }}
+      </p>
+      {% endif %}{% endfor %}{% endfor %}
+    </div>
+    {% endfor %}
+
+    {% if brutos.total_amostras %}
+    <div class="anexo-grupo">
+      <h3>Amostras pareadas</h3>
+      <p class="nota">
+        {{ brutos.total_amostras }} amostra{{ brutos.total_amostras|pluralize }}
+        {% if brutos.amostras_descartadas %}&middot; {{ brutos.amostras_descartadas }} descartada{{ brutos.amostras_descartadas|pluralize }}{% endif %}
+        &middot; valores em {{ estudo.mensurando.unidade_medida }}
+      </p>
+      <div class="pareadas">
+        {% for coluna in brutos.amostras %}
+        {% if coluna %}
+        <table>
+          <colgroup><col style="width: 40%"><col style="width: 30%"><col style="width: 30%"></colgroup>
+          <thead>
+          <tr><th>Amostra</th><th class="n">Comparação</th><th class="n">Teste</th></tr>
+          </thead>
+          {% for amostra in coluna %}
+          <tr{% if amostra.excluida %} class="descartada"{% endif %}>
+            <td>
+              {{ amostra.identificacao }}
+              {% if amostra.excluida %}<div class="nota">descartada &mdash; {{ amostra.justificativa_exclusao|default:"sem justificativa" }}</div>{% endif %}
+            </td>
+            <td class="n">{{ amostra.valor_comparacao|com_menos:4 }}</td>
+            <td class="n">{{ amostra.valor_teste|com_menos:4 }}</td>
+          </tr>
+          {% endfor %}
+        </table>
+        {% endif %}
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+  {% endif %}
 
   <div class="rodape-doc">
     Procedimentos conforme descritos em CLSI EP15 (precisão), EP09 (comparação de métodos) e

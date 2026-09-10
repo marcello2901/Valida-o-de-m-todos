@@ -504,6 +504,78 @@ class AmostraQualitativa(models.Model):
         return f"{self.identificacao}: ref. {marca(self.resultado_referencia)} / teste {marca(self.resultado_teste)}"
 
 
+class RecorteRegressao(models.Model):
+    """Uma faixa de concentração examinada em separado no gráfico de regressão.
+
+    Existe por causa de um problema real da comparação de métodos: **r depende
+    da amplitude das amostras**. Uma amostra muito acima das outras aumenta a
+    variância de X e empurra r para 1 mecanicamente, e o gráfico fica com cara
+    de reta quando o miolo dos dados — onde estão os pacientes — não concorda.
+    A prática do laboratório era apagar os extremos e olhar de novo, o que
+    funciona e não deixa rastro nenhum.
+
+    O recorte é essa mesma leitura, registrada: qual faixa foi examinada, por
+    que, quem examinou e quando. Ele **nunca substitui** o gráfico inteiro no
+    relatório — aparece ao lado dele, nomeado como recorte. Um relatório que
+    mostrasse apenas a faixa escolhida a dedo seria o critério subjetivo
+    promovido a documento assinado.
+
+    A seleção é por faixa de concentração (eixo X), e não por retângulo: todas
+    as amostras dentro da faixa entram. Um retângulo permitiria contornar um
+    ponto discordante mantendo os vizinhos, que é descartar amostra sem
+    justificativa com outro nome.
+    """
+
+    estudo = models.ForeignKey(
+        Estudo, verbose_name="estudo", on_delete=models.CASCADE, related_name="recortes"
+    )
+    rotulo = models.CharField(
+        "rótulo", max_length=80,
+        help_text="Como este recorte aparece no relatório. Ex.: “Faixa baixa — até 150 mg/dL”.",
+    )
+    minimo = models.DecimalField(
+        "concentração mínima", max_digits=14, decimal_places=4,
+        help_text="Limite inferior da faixa, no sistema de comparação.",
+    )
+    maximo = models.DecimalField(
+        "concentração máxima", max_digits=14, decimal_places=4,
+        help_text="Limite superior da faixa, no sistema de comparação.",
+    )
+    justificativa = models.TextField(
+        "por que esta faixa",
+        help_text=(
+            "O motivo de examinar esta faixa em separado. Vai para o relatório junto "
+            "do recorte — sem ele, um subconjunto escolhido à mão não se sustenta."
+        ),
+    )
+    criado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL, verbose_name="criado por", on_delete=models.PROTECT,
+        null=True, blank=True, related_name="recortes_criados"
+    )
+    criado_em = models.DateTimeField("criado em", auto_now_add=True)
+
+    class Meta:
+        verbose_name = "recorte da regressão"
+        verbose_name_plural = "recortes da regressão"
+        ordering = ["minimo", "pk"]
+
+    def __str__(self):
+        return f"{self.rotulo} ({self.minimo} a {self.maximo})"
+
+    def clean(self):
+        if self.minimo is not None and self.maximo is not None and self.minimo >= self.maximo:
+            raise ValidationError(
+                {"maximo": "O limite superior da faixa deve ser maior que o inferior."}
+            )
+
+    def faixa_escrita(self) -> str:
+        """A faixa como o relatório a imprime."""
+        def limpo(valor):
+            return format(valor.normalize(), "f").replace(".", ",")
+
+        return f"{limpo(self.minimo)} a {limpo(self.maximo)}"
+
+
 class Veredito(models.Model):
     """Retrato congelado dos números de um estudo, e a decisão tomada sobre eles.
 

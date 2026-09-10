@@ -119,11 +119,18 @@ class _Escala:
         return marcas
 
 
-def _moldura(titulo: str, descricao: str, corpo: str) -> str:
+def _moldura(titulo: str, descricao: str, corpo: str, dados: str = "") -> str:
+    """A moldura do gráfico.
+
+    ``dados`` são atributos ``data-*`` que a tela usa para converter pixel em
+    valor — é o que permite arrastar uma faixa sobre o gráfico sem que o
+    navegador precise saber estatística nenhuma: ele só devolve os dois
+    limites, e quem recalcula é o motor.
+    """
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {LARGURA} {ALTURA}" '
         f'width="100%" style="max-width:{LARGURA}px;font-family:{FONTE}" '
-        f'role="img" aria-label="{_escapar(titulo)}">'
+        f'role="img" aria-label="{_escapar(titulo)}"{dados}>'
         f"<desc>{_escapar(descricao)}</desc>"
         f'<rect width="{LARGURA}" height="{ALTURA}" fill="{SUPERFICIE}"/>'
         f'<text x="{MARGEM_ESQUERDA}" y="30" font-size="15" font-weight="600" '
@@ -208,8 +215,8 @@ def _marca(x: float, y: float, fora: bool, dica: str) -> str:
 def _legenda(itens: Sequence[tuple[str, str]]) -> str:
     """Legenda no rodapé, quebrando em duas linhas quando não couber em uma.
 
-    ``itens`` são pares (tipo, texto). Tipos: ``ponto``, ``losango``,
-    ``linha_solida``, ``linha_tracejada``.
+    ``itens`` são pares (tipo, texto). Tipos: ``ponto``, ``ponto_apagado``,
+    ``losango``, ``linha_solida``, ``linha_tracejada``.
 
     A quebra existe porque a legenda cresce com o conteúdo do estudo: sem ela, o
     último item — que costuma ser justamente a reta de identidade — sai cortado
@@ -238,6 +245,14 @@ def _legenda(itens: Sequence[tuple[str, str]]) -> str:
             if tipo == "ponto":
                 partes.append(
                     f'<circle cx="{x + 5}" cy="{y - 4}" r="{RAIO_MARCA}" fill="{DADO_DENTRO}"/>'
+                )
+            elif tipo == "ponto_apagado":
+                # A mesma tinta esmaecida do ponto fora da faixa. Uma legenda
+                # que mostra a amostra excluída com a cor da incluída mente
+                # sobre o desenho que ela explica.
+                partes.append(
+                    f'<circle cx="{x + 5}" cy="{y - 4}" r="{RAIO_MARCA}" '
+                    f'fill="{TINTA_SUAVE}" fill-opacity="0.35"/>'
                 )
             elif tipo == "losango":
                 d = RAIO_MARCA + 1.5
@@ -274,12 +289,19 @@ def grafico_regressao(
     identificacoes: Sequence[str] | None = None,
     unidade: str = "",
     titulo: str = "Comparação de métodos — regressão",
+    faixa: tuple[float, float] | None = None,
+    selecionavel: bool = False,
 ) -> str:
     """Dispersão dos pares com a reta de regressão e a reta de identidade.
 
     A reta de identidade (y = x) é o que o olho precisa para julgar concordância:
     sem ela, qualquer nuvem de pontos parece alinhada. A distância entre as duas
     retas é o erro sistemático, e é isso que o gráfico existe para mostrar.
+
+    Com ``faixa``, a nuvem inteira continua desenhada e a faixa escolhida fica
+    em destaque: os pontos fora dela esmaecem e a reta é traçada só dentro. É o
+    que mantém o recorte legível — uma faixa mostrada sozinha, sem o resto da
+    dispersão em volta, esconde justamente o que motivou o recorte.
     """
     pares = [
         (float(x), float(y))
@@ -307,6 +329,16 @@ def grafico_regressao(
         )
     ]
 
+    # A faixa em destaque vai antes de tudo: é fundo, não marca.
+    if faixa is not None:
+        inicio = escala_x(max(faixa[0], escala_x.minimo))
+        fim = escala_x(min(faixa[1], escala_x.maximo))
+        corpo.append(
+            f'<rect x="{inicio:.1f}" y="{MARGEM_SUPERIOR}" width="{max(fim - inicio, 0):.1f}" '
+            f'height="{ALTURA - MARGEM_INFERIOR - MARGEM_SUPERIOR}" fill="{DADO_DENTRO}" '
+            f'fill-opacity="0.08"/>'
+        )
+
     # Reta de identidade: tracejada, tinta suave, rotulada.
     corpo.append(
         f'<line x1="{escala_x(escala_x.minimo):.1f}" y1="{escala_y(escala_x.minimo):.1f}" '
@@ -316,6 +348,8 @@ def grafico_regressao(
 
     if inclinacao is not None and intercepto is not None:
         x0, x1 = escala_x.minimo, escala_x.maximo
+        if faixa is not None:
+            x0, x1 = max(x0, faixa[0]), min(x1, faixa[1])
         corpo.append(
             f'<line x1="{escala_x(x0):.1f}" y1="{escala_y(inclinacao * x0 + intercepto):.1f}" '
             f'x2="{escala_x(x1):.1f}" y2="{escala_y(inclinacao * x1 + intercepto):.1f}" '
@@ -332,21 +366,51 @@ def grafico_regressao(
         fora = bool(marcados[indice]) if indice < len(marcados) else False
         nome = nomes[indice] if indice < len(nomes) else f"amostra {indice + 1}"
         dica = f"{nome}: comparação {_formatar(x, 3)} · teste {_formatar(y, 3)} {unidade}".strip()
-        corpo.append(_marca(escala_x(x), escala_y(y), fora, dica))
+        na_faixa = faixa is None or faixa[0] <= x <= faixa[1]
+        if na_faixa:
+            corpo.append(_marca(escala_x(x), escala_y(y), fora, dica))
+        else:
+            corpo.append(
+                f'<circle cx="{escala_x(x):.1f}" cy="{escala_y(y):.1f}" r="{RAIO_MARCA}" '
+                f'fill="{TINTA_SUAVE}" fill-opacity="0.35"><title>'
+                f"{_escapar(dica)} — fora da faixa examinada</title></circle>"
+            )
 
     itens = [("ponto", "amostra dentro do limite")]
     if any(marcados):
         itens.append(("losango", "fora do erro total permitido"))
     if inclinacao is not None:
-        itens.append(("linha_solida", "regressão"))
+        itens.append(("linha_solida", "regressão" if faixa is None else "regressão da faixa"))
     itens.append(("linha_tracejada", "identidade (y = x)"))
+    if faixa is not None:
+        itens.append(("ponto_apagado", "amostra fora da faixa examinada"))
     corpo.append(_legenda(itens))
 
-    descricao = (
-        f"Dispersão de {len(pares)} amostras medidas nos dois sistemas, com reta de "
-        "regressão e reta de identidade para comparação visual do erro sistemático."
-    )
-    return _moldura(titulo, descricao, "".join(corpo))
+    if faixa is None:
+        descricao = (
+            f"Dispersão de {len(pares)} amostras medidas nos dois sistemas, com reta de "
+            "regressão e reta de identidade para comparação visual do erro sistemático."
+        )
+    else:
+        dentro = sum(1 for x, _ in pares if faixa[0] <= x <= faixa[1])
+        descricao = (
+            f"Dispersão de {len(pares)} amostras, com destaque para a faixa de "
+            f"{_formatar(faixa[0], 3)} a {_formatar(faixa[1], 3)} {unidade}".strip()
+            + f", que contém {dentro} amostra(s), e a reta calculada só sobre elas."
+        )
+
+    # A tela precisa converter pixel em valor para o usuário arrastar a faixa.
+    # Só o gráfico da tela ganha esses atributos: no papel não se arrasta nada.
+    dados = ""
+    if selecionavel:
+        dados = (
+            f' data-selecionavel="regressao"'
+            f' data-x-minimo="{escala_x.minimo:.6f}" data-x-maximo="{escala_x.maximo:.6f}"'
+            f' data-pixel-inicio="{escala_x.pixel_inicio:.2f}" data-pixel-fim="{escala_x.pixel_fim:.2f}"'
+            f' data-topo="{MARGEM_SUPERIOR}" data-base="{ALTURA - MARGEM_INFERIOR}"'
+            f' data-largura="{LARGURA}" data-altura="{ALTURA}"'
+        )
+    return _moldura(titulo, descricao, "".join(corpo), dados)
 
 
 def grafico_bland_altman(
