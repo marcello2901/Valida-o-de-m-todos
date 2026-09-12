@@ -2259,8 +2259,56 @@ class TestTipografiaDoDocumentoImpresso(TestCase):
     def test_um_nivel_nao_parte_ao_meio(self):
         # A estatística das corridas e a avaliação que sai dela pertencem uma à
         # outra; metade numa página e metade na outra não se lê.
+        import re
+
         self.assertIn('class="nivel-bloco"', self.corpo)
-        self.assertIn(".nivel-bloco, .veredito-final, .assinatura { break-inside: avoid; }", self.corpo)
+        self.assertTrue(
+            re.search(r"\.nivel-bloco[^{}]*\{[^{}]*break-inside: avoid", self.corpo),
+            "o nível precisa entrar numa regra de break-inside: avoid",
+        )
+
+    # --- Cartões ---------------------------------------------------------------
+
+    def test_cada_secao_e_um_cartao(self):
+        # A separação por espaço não bastava: com a folha cheia, três seções
+        # seguidas de tabela liam como um bloco só.
+        import re
+
+        self.assertGreater(self.corpo.count('class="bloco"'), 2)
+        self.assertTrue(
+            re.search(r"\n  \.bloco \{[^{}]*border: 1px solid", self.corpo),
+            "a seção precisa de moldura própria",
+        )
+
+    def test_secao_que_nao_cabe_na_folha_nao_e_cartao(self):
+        # Cartão que atravessa a quebra sai com a moldura aberta, e a folha
+        # seguinte recebe duas linhas verticais descendo pelo vazio. Precisão e
+        # comparabilidade passam de uma página, então abrem.
+        self.assertIn('class="bloco bloco--aberto"', self.corpo)
+        self.assertIn("Precisão e exatidão", self.corpo)
+        posicao = self.corpo.index("Precisão e exatidão")
+        abertura = self.corpo.rindex("<div class=", 0, posicao)
+        self.assertIn("bloco--aberto", self.corpo[abertura:posicao])
+
+    def test_a_separacao_nao_depende_de_fundo_colorido(self):
+        """O que separa as seções tem de sobreviver à impressão sem fundos.
+
+        A caixa de impressão do navegador vem com "gráficos de fundo"
+        desligada: fundo colorido não sai no papel, borda sai. Antes desta
+        regra, o número da seção era branco sobre cinza — no papel virava
+        branco sobre branco, e o relatório saía sem numeração nenhuma.
+        """
+        import re
+
+        selo = re.search(r"\.bloco > h2::before \{(.*?)\}", self.corpo, re.S)
+        self.assertIsNotNone(selo)
+        self.assertIn("border:", selo.group(1))
+        self.assertNotIn("background:", selo.group(1))
+
+        marca = re.search(r"\.timbre \.marca \{(.*?)\}", self.corpo, re.S)
+        self.assertIsNotNone(marca)
+        self.assertIn("background: none", marca.group(1))
+        self.assertIn("border:", marca.group(1))
 
     def test_cada_sistema_analitico_leva_a_propria_metodologia(self):
         # Na grade corrida anterior, "Metodologia" aparecia duas vezes e podia

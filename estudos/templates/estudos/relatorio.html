@@ -20,23 +20,36 @@
 
 {% block estilo %}
 <style>
-  /* --- Tipografia e ritmo do documento -------------------------------------
+  /* --- Ritmo do documento: uma seção, um cartão -----------------------------
    *
    * Um relatório de validação é lido em duas situações: de relance, procurando
-   * uma seção, e devagar, conferindo um número. As duas pedem coisas opostas —
-   * a primeira quer marcos visuais fortes, a segunda quer densidade — e a
-   * versão anterior não servia nenhuma das duas: todas as seções a 20px umas
-   * das outras, com o mesmo peso, e tabelas coladas nos títulos.
+   * uma seção, e devagar, conferindo um número. Separar por espaço servia a
+   * segunda e não a primeira — com a página cheia, três seções seguidas de
+   * tabela liam como um bloco só, "umas em cima das outras".
    *
-   * A separação aqui é feita por ESPAÇO, e não por moldura. Cada seção abre com
-   * um filete fino, respira, e o título fica solto acima do conteúdo. É o que
-   * dá o "onde começa o quê" sem encher a página de caixas.
+   * Agora cada seção é um cartão fechado, com cabeçalho próprio, sobre um fundo
+   * de página mais escuro. O contorno faz o trabalho que o espaço não fazia: o
+   * olho encontra onde a seção começa e onde ela acaba antes de ler qualquer
+   * palavra.
+   *
+   * Restrição que decidiu o desenho: a caixa de impressão do navegador vem com
+   * "gráficos de fundo" DESLIGADA. Fundo colorido não sai no papel — borda sai.
+   * Por isso a separação é carregada pelo filete de 1px, e o preenchimento é
+   * só um reforço para quem lê na tela ou liga a opção. Um cartão que dependa
+   * do fundo é um cartão que some justamente na impressão.
    */
   .aplicacao { display: block; }
   .folha {
-    max-width: 880px; margin: 0 auto; padding: 30px 34px 70px;
-    background: var(--superficie); color: var(--tinta);
+    max-width: 880px; margin: 0 auto; padding: 22px 18px 60px;
+    background: var(--plano); color: var(--tinta);
     counter-reset: secao;
+  }
+
+  /* O cartão em si. Sem sombra: na tela ela some contra o fundo claro e no
+   * papel vira uma mancha cinza. Filete e raio bastam. */
+  .cartao-doc {
+    background: var(--superficie); border: 1px solid var(--linha);
+    border-radius: 12px; padding: 20px 22px 22px;
   }
 
   .comandos {
@@ -44,13 +57,25 @@
     display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
   }
 
-  /* --- Timbre --------------------------------------------------------------- */
+  /* --- Timbre ---------------------------------------------------------------
+   *
+   * Também é cartão, para as bordas alinharem com o resto da pilha, mas leva a
+   * régua escura por dentro: é a abertura do documento, não uma seção a mais.
+   */
   .timbre {
     display: flex; align-items: flex-start; gap: 16px;
-    padding-bottom: 18px; border-bottom: 1.5px solid var(--tinta);
+    padding: 20px 22px 18px;
+    background: var(--superficie); border: 1px solid var(--borda); border-radius: 12px;
+    break-inside: avoid;
   }
+  /* A marca do trilho vem preenchida do base.html. Aqui ela é vazada, pela
+   * mesma razão do número da seção: fundo não sai no papel com a opção padrão
+   * da caixa de impressão, e a letra branca sumia junto com ele. Precisa
+   * desligar o preenchimento herdado — só trocar a cor da letra deixava tinta
+   * escura sobre tinta escura. */
   .timbre .marca {
-    width: 42px; height: 42px; border-radius: 11px; background: var(--tinta); color: var(--superficie);
+    width: 40px; height: 40px; border-radius: 11px; background: none;
+    border: 1.5px solid var(--tinta); color: var(--tinta);
     display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 18px;
     flex-shrink: 0; font-family: "Instrument Sans", system-ui, sans-serif;
   }
@@ -66,33 +91,62 @@
 
   /* --- Seção ----------------------------------------------------------------
    *
-   * Filete acima e folga generosa: o olho encontra o começo da seção antes de
-   * ler o título. A numeração é automática e serve à conferência — numa
-   * auditoria se aponta para "a seção 4", não para "aquela do meio".
+   * Cada seção é um cartão com cabeçalho próprio: a régua do título atravessa o
+   * cartão de ponta a ponta, então dá para ver de longe quantas seções há na
+   * página e onde cada uma termina. A numeração é automática e serve à
+   * conferência — numa auditoria se aponta para "a seção 4", não para "aquela
+   * do meio".
    */
   .bloco {
-    margin-top: 38px; padding-top: 20px; border-top: 1px solid var(--linha);
+    margin-top: 14px; padding: 20px 22px 22px;
+    background: var(--superficie); border: 1px solid var(--linha); border-radius: 12px;
     break-inside: auto;
   }
-  .bloco:first-of-type { margin-top: 26px; padding-top: 0; border-top: none; }
   .bloco > h2 {
     font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .09em;
-    color: var(--tinta-3); margin: 0 0 16px; padding: 0; border: none;
-    display: flex; align-items: baseline; gap: 9px;
+    color: var(--tinta-3);
+    margin: -2px -22px 18px; padding: 0 22px 12px;
+    border: none; border-bottom: 1px solid var(--grade);
+    display: flex; align-items: center; gap: 9px;
     break-after: avoid;
   }
+  /* O número é desenhado com CONTORNO, e não com fundo preenchido, pela mesma
+   * razão dos cartões: fundo não sai no papel com a opção padrão da caixa de
+   * impressão, e o número branco sobre fundo cinza virava número branco sobre
+   * branco — o documento saía sem numeração de seção. */
+  /* Seção que NÃO cabe numa folha não é cartão.
+   *
+   * Precisão com três níveis e comparabilidade com gráficos passam de uma
+   * página. Um cartão que atravessa a quebra sai com a moldura aberta, e a
+   * folha seguinte recebe duas linhas verticais descendo por um espaço vazio —
+   * lê como defeito de impressão, não como seção. Essas duas abrem: fica o
+   * cabeçalho numerado, e quem carrega a moldura são as peças de dentro, que
+   * cabem na folha (o nível, o gráfico, o recorte).
+   *
+   * É também o que evita cartão dentro de cartão, que era moldura repetida
+   * dizendo a mesma coisa duas vezes. */
+  .bloco--aberto {
+    background: none; border: none; border-radius: 0; padding: 0 4px;
+  }
+  .bloco--aberto > h2 { margin: 0 0 12px; padding: 0 0 10px; }
+
   .bloco > h2::before {
     counter-increment: secao; content: counter(secao);
-    font-size: 11px; font-weight: 700; letter-spacing: 0; color: var(--superficie);
-    background: var(--tinta-3); border-radius: 4px;
-    min-width: 17px; height: 17px; display: inline-flex;
+    font-size: 10.5px; font-weight: 700; letter-spacing: 0; color: var(--tinta-2);
+    border: 1px solid var(--borda); border-radius: 5px;
+    min-width: 18px; height: 18px; display: inline-flex;
     align-items: center; justify-content: center; flex-shrink: 0;
     font-family: "Instrument Sans", system-ui, sans-serif;
   }
 
-  /* Subseção — um nível de controle dentro da faixa de precisão. Nunca parte
-   * ao meio numa quebra de página: metade de uma tabela de nível não se lê. */
-  .nivel-bloco { margin-top: 22px; break-inside: avoid; }
+  /* Um nível de controle. Dentro de uma seção aberta ele é o cartão, então usa
+   * a mesma moldura das seções. Nunca parte ao meio numa quebra de página:
+   * metade de uma tabela de nível não se lê. */
+  .nivel-bloco {
+    margin-top: 14px; padding: 18px 20px 20px;
+    background: var(--superficie); border: 1px solid var(--linha); border-radius: 12px;
+    break-inside: avoid;
+  }
   .nivel-bloco:first-of-type { margin-top: 0; }
   .bloco h3 {
     font-size: 13px; font-weight: 600; margin: 22px 0 3px; break-after: avoid;
@@ -126,7 +180,10 @@
     display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
     gap: 14px;
   }
-  .sistema { padding: 14px 16px; background: var(--faixa); border-radius: 8px; break-inside: avoid; }
+  .sistema {
+    padding: 14px 16px; background: var(--faixa); border-radius: 8px;
+    border: 1px solid var(--grade); break-inside: avoid;
+  }
   .sistema .papel {
     font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em;
     color: var(--tinta-3);
@@ -157,18 +214,23 @@
 
   /* --- Conclusão e veredito -------------------------------------------------
    *
-   * A conclusão perde a moldura e fica só com o fundo: borda mais fundo é uma
-   * ênfase duplicada. O veredito mantém a caixa porque é a única coisa da
-   * página que precisa ser vista antes de ser lida.
+   * A conclusão é texto de pessoa dentro de um cartão de dados: a régua à
+   * esquerda diz isso sem repetir a moldura que o cartão já tem.
+   *
+   * O veredito é o único cartão com borda escura. É a única coisa do documento
+   * que precisa ser vista antes de ser lida, e no meio de uma pilha de cartões
+   * iguais só o peso da borda dá esse destaque.
    */
   .conclusao {
-    margin: 0; padding: 15px 17px; border: none; border-left: 2px solid var(--linha);
+    margin: 0; padding: 14px 16px; border: 1px solid var(--grade);
+    border-left: 2px solid var(--borda); border-radius: 0 8px 8px 0;
     background: var(--faixa); font-size: 12.5px; line-height: 1.65; white-space: pre-wrap;
   }
 
   .veredito-final {
-    margin-top: 30px; padding: 18px 20px; border: 1.5px solid var(--tinta);
-    border-radius: 10px; display: flex; align-items: center; gap: 16px; break-inside: avoid;
+    margin-top: 14px; padding: 18px 20px; border: 2px solid var(--tinta);
+    border-radius: 12px; background: var(--superficie);
+    display: flex; align-items: center; gap: 16px; break-inside: avoid;
   }
   .veredito-final .rotulo {
     font-size: 9.5px; color: var(--tinta-3); text-transform: uppercase;
@@ -179,9 +241,16 @@
     font-family: "Instrument Sans", system-ui, sans-serif;
   }
 
-  /* --- Assinaturas e rodapé -------------------------------------------------- */
+  /* --- Assinaturas e rodapé --------------------------------------------------
+   *
+   * A assinatura também é cartão, senão fica boiando no fundo da página depois
+   * de uma pilha de caixas. O rodapé não: é letra miúda de documento, e uma
+   * caixa em volta dela pediria uma atenção que ela não quer.
+   */
   .assinatura {
-    margin-top: 46px; display: grid; grid-template-columns: repeat(2, 1fr);
+    margin-top: 14px; padding: 22px 22px 20px;
+    background: var(--superficie); border: 1px solid var(--linha); border-radius: 12px;
+    display: grid; grid-template-columns: repeat(2, 1fr);
     gap: 36px; break-inside: avoid;
   }
   .assinatura .linha-firma {
@@ -190,7 +259,7 @@
   }
 
   .rodape-doc {
-    margin-top: 34px; padding-top: 14px; border-top: 1px solid var(--linha);
+    margin: 22px 4px 0; padding-top: 14px; border-top: 1px solid var(--linha);
     font-size: 10px; color: var(--tinta-3); line-height: 1.6; text-align: justify;
   }
 
@@ -200,19 +269,27 @@
    * menor, uma coluna de números por corrida, duas colunas de amostras. O que
    * foi descartado fica riscado e nomeado — some do cálculo, não do papel.
    */
-  .anexo { margin-top: 44px; padding-top: 22px; border-top: 1px solid var(--linha); }
+  .anexo { margin-top: 26px; }
   .anexo > h2 {
     font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .09em;
-    color: var(--tinta-2); margin: 0 0 6px; break-after: avoid;
+    color: var(--tinta-2); margin: 0 4px 4px; break-after: avoid;
   }
-  .anexo-grupo { margin-top: 26px; break-inside: avoid; }
-  .anexo-grupo:first-of-type { margin-top: 20px; }
+  .anexo > .nota { margin: 0 4px 14px; }
+  /* Cada grupo do anexo — um nível de controle, a lista de amostras — é um
+   * cartão como as seções do corpo. O anexo costuma ser a parte mais densa do
+   * documento, e é onde a separação rende mais. */
+  .anexo-grupo {
+    margin-top: 14px; padding: 18px 20px 20px;
+    background: var(--superficie); border: 1px solid var(--linha); border-radius: 12px;
+    break-inside: avoid;
+  }
   .anexo h3 { font-size: 12.5px; font-weight: 600; margin: 0 0 2px; break-after: avoid; }
 
   .corridas { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
   .corrida {
     flex: 1 1 96px; min-width: 88px; padding: 9px 10px 10px;
-    background: var(--faixa); border-radius: 7px; break-inside: avoid;
+    background: var(--faixa); border: 1px solid var(--grade); border-radius: 7px;
+    break-inside: avoid;
   }
   .corrida-titulo {
     font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em;
@@ -236,9 +313,10 @@
   .pareadas table { flex: 1 1 0; font-size: 11.5px; }
   .pareadas td, .pareadas th { padding: 5px 8px; }
 
-  /* Recorte por faixa: um bloco fechado, sempre depois do gráfico completo. */
+  /* Recorte por faixa: cartão próprio, sempre depois do gráfico completo. */
   .recorte {
-    margin-top: 24px; padding-top: 16px; border-top: 1px dashed var(--linha);
+    margin-top: 14px; padding: 18px 20px 20px;
+    background: var(--superficie); border: 1px solid var(--linha); border-radius: 12px;
     break-inside: avoid;
   }
   .recorte h3 { font-size: 12.5px; font-weight: 600; margin: 0 0 2px; }
@@ -248,8 +326,18 @@
     font-size: 12px; line-height: 1.6; white-space: pre-wrap;
   }
 
-  .grafico { margin: 16px 0 4px; break-inside: avoid; }
-  .grafico svg { max-width: 100%; height: auto; }
+  /* O gráfico é uma figura dentro da seção: filete em volta para não flutuar
+   * solto no papel, onde o fundo claro do SVG quase não se distingue. */
+  .grafico {
+    margin: 14px 0 0; padding: 5px; break-inside: avoid;
+    background: var(--superficie); border: 1px solid var(--linha); border-radius: 12px;
+    overflow: hidden;
+  }
+  /* Dentro de um cartão (recorte, nível) o gráfico não repete a moldura. */
+  .recorte .grafico, .nivel-bloco .grafico {
+    border-color: var(--grade); border-radius: 9px; background: none;
+  }
+  .grafico svg { max-width: 100%; height: auto; display: block; }
 
   ul.ressalvas { font-size: 12px; line-height: 1.7; padding-left: 17px; margin: 0; list-style: disc; }
   ul.ressalvas li { padding-left: 3px; }
@@ -275,21 +363,46 @@
     @page { size: A4; margin: 15mm 13mm 17mm; }
     body { background: #fff; }
     .comandos, .recados, .como-salvar { display: none !important; }
-    .folha { max-width: none; margin: 0; padding: 0; box-shadow: none; }
+    .folha { max-width: none; margin: 0; padding: 0; background: #fff; box-shadow: none; }
     a { color: inherit; text-decoration: none; }
 
     /* Título nunca sozinho no pé da página, parágrafo nunca com uma linha
      * solta do outro lado da quebra. */
     h1, h2, h3 { break-after: avoid; page-break-after: avoid; }
     p, li { orphans: 3; widows: 3; }
-    tr, .nivel-bloco, .veredito-final, .assinatura { break-inside: avoid; }
+    tr { break-inside: avoid; }
+
+    /* Quebra de página x cartão: um cartão cortado ao meio sai com a borda
+     * aberta, o que parece defeito de impressão. Os que cabem numa folha são
+     * mantidos inteiros; os que não cabem — precisão com vários níveis,
+     * comparabilidade com gráfico, o anexo — continuam podendo partir, mas as
+     * peças de dentro (nível, corrida, recorte, tabela de amostras) é que são
+     * indivisíveis, então a quebra cai num lugar que se lê.
+     *
+     * Forçar "não parta" num cartão maior que a folha não o mantém inteiro:
+     * empurra para a página seguinte, deixa meia folha em branco e parte do
+     * mesmo jeito. */
+    .timbre, .veredito-final, .assinatura,
+    .nivel-bloco, .recorte, .anexo-grupo, .sistema, .corrida { break-inside: avoid; }
 
     /* O anexo é prova anexada ao documento assinado: começa em folha própria. */
-    .anexo { break-before: page; margin-top: 0; padding-top: 0; border-top: none; }
+    .anexo { break-before: page; margin-top: 0; }
 
-    /* O filete de seção some junto do espaço quando a seção abre uma página —
-     * o topo da folha já é separação suficiente. */
-    .bloco { margin-top: 30px; padding-top: 16px; }
+    /* No papel o cartão aperta: folga entre cartões menor e respiro interno
+     * menor. A folha é bem mais estreita que a tela e o contorno já faz a
+     * separação — o espaço a mais viraria página a mais, e o relatório é
+     * arquivado em pasta física.
+     *
+     * O recuo negativo do cabeçalho tem de acompanhar o novo respiro, senão a
+     * régua do título para antes da borda do cartão. */
+    .bloco, .timbre, .veredito-final, .assinatura, .anexo-grupo { margin-top: 9px; }
+    .bloco, .timbre, .anexo-grupo { padding: 14px 16px 16px; }
+    .bloco > h2 { margin: -1px -16px 13px; padding: 0 16px 9px; }
+    .bloco--aberto { padding: 0 2px; }
+    .bloco--aberto > h2 { margin: 0 0 9px; padding: 0 0 8px; }
+    .veredito-final, .assinatura { padding: 14px 16px; }
+    .nivel-bloco, .recorte { margin-top: 9px; padding: 13px 15px 15px; }
+    .grafico { margin: 9px 0 0; }
   }
 </style>
 {% endblock %}
@@ -475,7 +588,7 @@
   </div>
 
   {% if precisao %}
-  <div class="bloco">
+  <div class="bloco bloco--aberto">
     <h2>Precisão e exatidão</h2>
     {% comment %}
       Cada nível é um bloco fechado: a estatística das corridas e a avaliação
@@ -591,8 +704,13 @@
 
   {% if comparabilidade.tem_dados %}
   {% with c=comparabilidade %}
-  <div class="bloco">
+  <div class="bloco bloco--aberto">
     <h2>Comparabilidade — {{ c.n }} amostras pareadas</h2>
+    {% comment %}
+      A seção está aberta (não é cartão) porque passa de uma folha. A tabela de
+      medidas ganha cartão próprio para não ficar solta sobre o fundo da página.
+    {% endcomment %}
+    <div class="cartao-doc">
     <table>
       <thead>
       <tr><th>Medida</th><th class="n">Resultado</th><th>Leitura</th></tr>
@@ -641,6 +759,7 @@
         </td>
       </tr>
     </table>
+    </div>
     {% if graficos.regressao %}<div class="grafico">{{ graficos.regressao|safe }}</div>{% endif %}
 
     {% comment %}
